@@ -1,6 +1,11 @@
 You are integrating **Didit KYC (identity verification)**. Use a KYC workflow id.
 https://verify.didit.me/session/dLa60AsDfHDE
-git push -u origin master --force-with-lease
+
+git push -u origin master --force-with-lease /
+https://trademark-conflict-detector.vercel.app/
+https://vercel.com/bhone-htet-naings-projects/trademark-conflict-detector/EVLhqUVoVZC6R5BewikUmRo8eLBt
+
+
 **Recommended:** configure a webhook so your backend is notified when a verification decision is made. If you don't have one yet, create a webhook destination and add its signing secret to your `.env` as `DIDIT_WEBHOOK_SECRET` (see the Webhooks section below).
 
 ## Your Didit account
