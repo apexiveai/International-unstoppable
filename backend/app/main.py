@@ -25,14 +25,49 @@ from app.api.subscriptions import router as subscriptions_router
 from app.api.client_products import router as client_products_router
 
 
-app = FastAPI(
+api = FastAPI(
     title=settings.app_name,
     version="0.1.0",
 )
 
 
-app.add_middleware(
-    CORSMiddleware,
+api.include_router(chatbot.router)
+api.include_router(auth_router)
+api.include_router(didit_router)
+api.include_router(categories_router)
+api.include_router(threads_router)
+api.include_router(replies_router)
+api.include_router(article_router)
+api.include_router(projects_router)
+api.include_router(resources_router)
+api.include_router(clone_detector_router)
+api.include_router(phase_one_router)
+
+# Register only once
+api.include_router(
+    executions_router,
+    prefix="/api",
+)
+
+api.include_router(admin_router)
+api.include_router(client_management_router)
+api.include_router(tenant_router)
+api.include_router(project_engagement_router)
+api.include_router(search_router)
+api.include_router(payments.router)
+api.include_router(subscriptions_router)
+api.include_router(client_products_router)
+
+@api.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "apexive-community-api",
+    }
+
+
+app = CORSMiddleware(
+    app=api,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -46,38 +81,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-app.include_router(chatbot.router)
-app.include_router(auth_router)
-app.include_router(didit_router)
-app.include_router(categories_router)
-app.include_router(threads_router)
-app.include_router(replies_router)
-app.include_router(article_router)
-app.include_router(projects_router)
-app.include_router(resources_router)
-app.include_router(clone_detector_router)
-app.include_router(phase_one_router)
-
-# Register only once
-app.include_router(
-    executions_router,
-    prefix="/api",
-)
-
-app.include_router(admin_router)
-app.include_router(client_management_router)
-app.include_router(tenant_router)
-app.include_router(project_engagement_router)
-app.include_router(search_router)
-app.include_router(payments.router)
-app.include_router(subscriptions_router)
-app.include_router(client_products_router)
-
-@app.get("/health")
-def health():
-    return {
-        "status": "ok",
-        "service": "apexive-community-api",
-    }

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import secrets
-import string
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import hash_password
+from app.auth import generate_temporary_password, hash_password
 from app.core.authorization import require_admin
 from app.database import get_db
 from app.models import Tenant, User
@@ -37,11 +36,6 @@ class ClientPasswordResetResponse(BaseModel):
     user_id: int
     username: str
     temporary_password: str
-
-
-def _temporary_password() -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    return "".join(secrets.choice(alphabet) for _ in range(18))
 
 
 def _serialize_client(user: User, company_name: str | None = None) -> dict:
@@ -132,7 +126,7 @@ def create_client(
     tenant = Tenant(name=tenant_name, slug=slug)
     db.add(tenant)
     db.flush()
-    temporary_password = _temporary_password()
+    temporary_password = generate_temporary_password()
     client = User(
         username=username,
         email=email,
@@ -245,7 +239,7 @@ def reset_client_password(
 ):
     client = _client_or_404(db, client_id)
     tenant = _ensure_tenant(db, client)
-    temporary_password = _temporary_password()
+    temporary_password = generate_temporary_password()
     client.password_hash = hash_password(temporary_password)
     write_audit_log(
         db,

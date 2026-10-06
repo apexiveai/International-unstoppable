@@ -36,6 +36,12 @@ def hash_password(password: str) -> str:
 
     return pwd_context.hash(password)
 
+
+def generate_temporary_password() -> str:
+    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+    return "".join(secrets.choice(alphabet) for _ in range(18))
+
+
 def verify_password(
 
     password: str,

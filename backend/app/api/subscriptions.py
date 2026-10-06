@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
@@ -223,6 +225,10 @@ class ActivateSubscriptionRequest(BaseModel):
     duration_days: int = Field(default=30, ge=1, le=3660)
 
 
+class AdminSubscriptionPriceRequest(BaseModel):
+    price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+
+
 @router.post("/admin/subscriptions/{subscription_id}/activate")
 def activate_subscription(
     subscription_id: int,
@@ -304,6 +310,31 @@ def activate_subscription(
             "payment_id": payment.id,
             "current_period_end": subscription.current_period_end.isoformat(),
         },
+    )
+    db.commit()
+    db.refresh(subscription)
+    return _serialize_subscription(subscription)
+
+
+@router.patch("/admin/subscriptions/{subscription_id}/price")
+def admin_update_subscription_price(
+    subscription_id: int,
+    payload: AdminSubscriptionPriceRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    subscription = _get_subscription(db, subscription_id)
+    previous_price = str(subscription.price)
+    subscription.price = payload.price
+    write_audit_log(
+        db,
+        tenant_id=subscription.tenant_id,
+        actor_user_id=admin.id,
+        action="subscription.price_updated",
+        target_type="subscription",
+        target_id=subscription.id,
+        old_value={"price": previous_price, "currency": subscription.currency},
+        new_value={"price": str(payload.price), "currency": subscription.currency},
     )
     db.commit()
     db.refresh(subscription)

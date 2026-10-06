@@ -12,6 +12,27 @@ export type AdminClient = {
   created_at: string;
 };
 
+export type AdminAccount = {
+  id: number;
+  username: string;
+  email: string;
+  display_name: string;
+  is_active: boolean;
+  is_admin: true;
+  created_at: string;
+};
+
+export type AdminPlan = {
+  id: number;
+  product_key: string;
+  name: string;
+  description: string;
+  monthly_price: string;
+  currency: string;
+  billing_cycle: string;
+  is_active: boolean;
+};
+
 export type AdminPayment = {
   id: number;
   tenant_id: number;
@@ -30,6 +51,9 @@ export type AdminSubscription = {
   tenant_id: number;
   plan_id: number;
   status: string;
+  price: string;
+  currency: string;
+  billing_cycle: string;
   plan: { name: string; product_key: string };
   current_period_end: string | null;
 };
@@ -93,9 +117,9 @@ async function adminRequest<T>(
 export async function getAdminDashboard() {
   const [clients, payments, subscriptions, auditLogs] = await Promise.all([
     adminRequest<{ clients: AdminClient[] }>("/api/admin/clients"),
-    adminRequest<{ items: AdminPayment[] }>("/api/admin/payments"),
-    adminRequest<{ items: AdminSubscription[] }>("/api/admin/subscriptions"),
-    adminRequest<AdminAuditLog[]>("/api/admin/audit-logs"),
+    adminRequest<{ items: AdminPayment[] }>("/api/admin/payments?limit=500"),
+    adminRequest<{ items: AdminSubscription[] }>("/api/admin/subscriptions?limit=500"),
+    adminRequest<AdminAuditLog[]>("/api/admin/audit-logs?limit=500"),
   ]);
   return {
     clients: clients.clients,
@@ -103,6 +127,50 @@ export async function getAdminDashboard() {
     subscriptions: subscriptions.items,
     auditLogs,
   };
+}
+
+export function getAdminAccounts() {
+  return adminRequest<AdminAccount[]>("/api/admin/accounts");
+}
+
+export function createAdminAccount(payload: {
+  username: string;
+  email: string;
+  display_name: string;
+}) {
+  return adminRequest<{
+    admin: AdminAccount;
+    temporary_password: string;
+  }>("/api/admin/accounts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setAdminAccountStatus(accountId: number, isActive: boolean) {
+  return adminRequest<AdminAccount>(`/api/admin/accounts/${accountId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export function getAdminPlanSettings() {
+  return adminRequest<AdminPlan[]>("/api/admin/settings/plans");
+}
+
+export function updateAdminPlanSettings(
+  planId: number,
+  payload: Partial<
+    Pick<
+      AdminPlan,
+      "name" | "description" | "monthly_price" | "currency" | "billing_cycle" | "is_active"
+    >
+  >,
+) {
+  return adminRequest<AdminPlan>(`/api/admin/settings/plans/${planId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function createAdminClient(payload: {
@@ -151,6 +219,12 @@ export function rejectAdminPayment(paymentId: number, reason: string) {
   );
 }
 
+export function refundAdminPayment(paymentId: number) {
+  return adminRequest<AdminPayment>(`/api/admin/payments/${paymentId}/refund`, {
+    method: "POST",
+  });
+}
+
 export function updateAdminSubscription(
   subscriptionId: number,
   action: "activate" | "suspend" | "cancel",
@@ -162,6 +236,19 @@ export function updateAdminSubscription(
       ...(action === "activate"
         ? { body: JSON.stringify({ duration_days: 30 }) }
         : {}),
+    },
+  );
+}
+
+export function updateAdminSubscriptionPrice(
+  subscriptionId: number,
+  price: string,
+) {
+  return adminRequest<AdminSubscription>(
+    `/api/admin/subscriptions/${subscriptionId}/price`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ price }),
     },
   );
 }

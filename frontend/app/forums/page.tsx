@@ -34,30 +34,49 @@ export default function ForumsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
 
+    let mounted = true;
+
     fetch(`${API_URL}/api/categories`)
 
-      .then((res) => {
-
+      .then(async (res) => {
         if (!res.ok) {
-
-          throw new Error("Failed to load forums");
-
+          const detail = await res.text();
+          throw new Error(
+            detail || `Unable to load forums (HTTP ${res.status}).`,
+          );
         }
-
         return res.json();
-
       })
 
-      .then(setCategories)
+      .then((result: Category[]) => {
+        if (mounted) {
+          setCategories(result);
+          setError("");
+        }
+      })
 
-      .catch(console.error)
+      .catch((reason: unknown) => {
+        if (mounted) {
+          const detail = reason instanceof Error ? ` ${reason.message}` : "";
+          setError(
+            `Unable to reach the forums API at ${API_URL}. Check that the backend is online and allows this frontend origin.${detail}`,
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
 
-      .finally(() => setLoading(false));
+    return () => {
+      mounted = false;
+    };
 
-  }, []);
+  }, [retryCount]);
 
   return (
 
@@ -99,6 +118,22 @@ export default function ForumsPage() {
 
           </div>
 
+        ) : error ? (
+          <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-5 text-rose-200">
+            <p className="font-semibold">Forums are temporarily unavailable.</p>
+            <p className="mt-2 text-sm">{error}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setLoading(true);
+                setRetryCount((count) => count + 1);
+              }}
+              className="mt-4 rounded-lg border border-rose-300/30 px-4 py-2 text-sm font-semibold hover:bg-rose-500/10"
+            >
+              Try again
+            </button>
+          </div>
         ) : (
 
           <div className="grid gap-5 md:grid-cols-2">
