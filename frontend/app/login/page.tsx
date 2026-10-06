@@ -255,100 +255,97 @@ export default function LoginPage() {
   }
 
   async function handleSubmit(
-
     event: FormEvent<HTMLFormElement>,
-
   ) {
-
     event.preventDefault();
-
     setError("");
-
     setLoading(true);
 
     try {
+      const formData = new URLSearchParams();
+
+      formData.set("username", email.trim());
+      formData.set("password", password);
 
       const response = await fetch(
-
         `${API_URL}/api/auth/login`,
-
         {
-
           method: "POST",
-
           headers: {
-            "Content-Type": "application/json",
-
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
           },
-
-          body: JSON.stringify({
-
-            email: email.trim(),
-
-            password,
-
-          }),
-
+          body: formData.toString(),
         },
-
       );
 
       const data = await response.json();
 
       if (!response.ok) {
+        let message = "Login failed";
 
+        if (typeof data?.detail === "string") {
+          message = data.detail;
+        } else if (Array.isArray(data?.detail)) {
+          message = data.detail
+            .map((item: unknown) => {
+              if (
+                typeof item === "object" &&
+                item !== null &&
+                "msg" in item
+              ) {
+                return String(
+                  (item as { msg: unknown }).msg,
+                );
+              }
+
+              return JSON.stringify(item);
+            })
+            .join(", ");
+        } else if (
+          data?.detail &&
+          typeof data.detail === "object"
+        ) {
+          message = JSON.stringify(data.detail);
+        } else if (typeof data?.message === "string") {
+          message = data.message;
+        }
+
+        throw new Error(message);
+      }
+
+      if (!data?.access_token) {
         throw new Error(
-
-          data.detail || "Login failed",
-
+          "Login succeeded but no access token was returned.",
         );
-
       }
 
       localStorage.setItem(
-
         "apexive_token",
-
         data.access_token,
-
       );
 
       localStorage.setItem(
-
         "apexive_user",
-
         JSON.stringify(data.user),
-
       );
 
       const params = new URLSearchParams(
-
         window.location.search,
-
       );
 
       const next = params.get("next") || "/";
 
       router.replace(next);
-
     } catch (error: unknown) {
-
       setError(
-
         error instanceof Error
-
           ? error.message
-
           : "Login failed",
-
       );
-
     } finally {
-
       setLoading(false);
-
     }
-
   }
 
   return (
