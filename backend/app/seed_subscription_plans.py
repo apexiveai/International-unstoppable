@@ -24,22 +24,6 @@ PLANS = [
 
     {
 
-        "product_key": "network",
-
-        "name": "Network Design & Quotation",
-
-        "description": "Network planning, VLAN, IP planning, ACL, Cisco configuration and quotation.",
-
-        "monthly_price": Decimal("199.00"),
-
-        "currency": "USD",
-
-        "billing_cycle": "monthly",
-
-    },
-
-    {
-
         "product_key": "workforce",
 
         "name": "Autonomous Workforce",
@@ -54,38 +38,6 @@ PLANS = [
 
     },
 
-    {
-
-        "product_key": "trademark_workforce",
-
-        "name": "Trademark + Workforce",
-
-        "description": "Trademark Conflict and Autonomous Workforce combined subscription.",
-
-        "monthly_price": Decimal("499.00"),
-
-        "currency": "USD",
-
-        "billing_cycle": "monthly",
-
-    },
-
-    {
-
-        "product_key": "telecom",
-
-        "name": "Telecom Network",
-
-        "description": "Telecom network engineering and operational intelligence platform.",
-
-        "monthly_price": Decimal("399.00"),
-
-        "currency": "USD",
-
-        "billing_cycle": "monthly",
-
-    },
-
 ]
 
 def seed():
@@ -93,6 +45,21 @@ def seed():
     db = SessionLocal()
 
     try:
+
+        db.query(SubscriptionPlan).filter(
+            SubscriptionPlan.product_key.in_(
+                (
+                    "network",
+                    "trademark_workforce",
+                    "telecom",
+                    "max_myanmar",
+                    "mna",
+                )
+            )
+        ).update(
+            {"is_active": False},
+            synchronize_session=False,
+        )
 
         for data in PLANS:
 

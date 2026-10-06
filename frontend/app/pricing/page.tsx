@@ -35,14 +35,18 @@ export default function PricingPage() {
       try {
 
         const [planData, subscriptionData] = await Promise.all([
-
           getSubscriptionPlans(),
-
-          getMySubscriptions(),
-
+          localStorage.getItem("apexive_token")
+            ? getMySubscriptions()
+            : Promise.resolve<Subscription[]>([]),
         ]);
 
-        setPlans(planData as SubscriptionPlan[]);
+        const productFilter = new URLSearchParams(window.location.search).get("product");
+        setPlans(
+          productFilter
+            ? planData.filter((plan) => plan.product_key === productFilter)
+            : planData,
+        );
 
         setSubscriptions(subscriptionData);
 
@@ -191,7 +195,6 @@ function handleSubscribe(plan: {
       )}
 
       <section className="mx-auto max-w-7xl px-6 py-12">
-
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
 
           {plans.map((plan) => {
@@ -312,9 +315,15 @@ function handleSubscribe(plan: {
             );
 
           })}
-
         </div>
-
+        {plans.length === 0 && !error && (
+          <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-8 text-center">
+            <h2 className="text-lg font-semibold text-slate-900">Plans are being prepared</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              New product plans will appear here once pricing is confirmed.
+            </p>
+          </div>
+        )}
       </section>
 
     </main>

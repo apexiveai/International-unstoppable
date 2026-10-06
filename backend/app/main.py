@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.core.config import settings
 
 from app.api.auth import router as auth_router
 from app.api.didit import router as didit_router
@@ -14,16 +14,19 @@ from app.api.resources import router as resources_router
 from app.api.clone_detector import router as clone_detector_router
 from app.api import chatbot
 from app.api.tenant import router as tenant_router
-from app.api.subscriptions import router as subscriptions_router
 from app.api.project_engagement import router as project_engagement_router
 from app.api.search import router as search_router
 from app.api.phase1 import router as phase_one_router
 from app.api.executions import router as executions_router
 from app.api.admin import router as admin_router
+from app.api.client_management import router as client_management_router
 from app.api import payments
+from app.api.subscriptions import router as subscriptions_router
+from app.api.client_products import router as client_products_router
+
 
 app = FastAPI(
-    title="Apexive Community API",
+    title=settings.app_name,
     version="0.1.0",
 )
 
@@ -64,11 +67,13 @@ app.include_router(
 )
 
 app.include_router(admin_router)
+app.include_router(client_management_router)
 app.include_router(tenant_router)
 app.include_router(project_engagement_router)
 app.include_router(search_router)
-app.include_router(subscriptions_router)
 app.include_router(payments.router)
+app.include_router(subscriptions_router)
+app.include_router(client_products_router)
 
 @app.get("/health")
 def health():

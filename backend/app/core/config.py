@@ -5,7 +5,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "Apexive Community API"
-
     database_url: str
 
     frontend_url: str = "https://www.apexiveai.com"
@@ -14,10 +13,8 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
-
     smtp_from_email: str = ""
     smtp_from_name: str = "Apexive Community"
-
     email_enabled: bool = False
 
     jwt_secret: str = "CHANGE_THIS_IN_PRODUCTION"
@@ -27,9 +24,7 @@ class Settings(BaseSettings):
     didit_api_key: str = ""
     didit_workflow_id: str = ""
     didit_api_url: str = "https://verification.didit.me/v3/session/"
-    didit_status_url: str = (
-        "https://verification.didit.me/v3/session/{session_id}/"
-    )
+    didit_status_url: str = "https://verification.didit.me/v3/session/{session_id}/"
     didit_callback_url: str = ""
 
     embedding_api_key: str = ""
@@ -37,7 +32,7 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parent.parent / ".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         extra="ignore",
     )
 

@@ -7,7 +7,14 @@ from app.models.password_reset import PasswordResetToken
 from app.models.article import Article
 from app.models.project import Project
 from app.models.resource import Resource
-from app.models.tenant import Tenant, Document, Workflow, AuditLog, Permission
+from app.models.tenant import (
+    Tenant,
+    Document,
+    Workflow,
+    AuditLog,
+    TenantAuditLog,
+    Permission,
+)
 from app.models.notification import Notification
 from app.models.project_engagement import (
     ProjectTechnology,
@@ -40,6 +47,7 @@ __all__ = [
     "Document",
     "Workflow",
     "AuditLog",
+    "TenantAuditLog",
     "Permission",
         
     "SubscriptionPlan",

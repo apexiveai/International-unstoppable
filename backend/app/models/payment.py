@@ -17,8 +17,9 @@ class PaymentStatus(str, Enum):
     PROCESSING = "processing"
 
     PAID = "paid"
-
+    VERIFIED = "verified"
     FAILED = "failed"
+    REJECTED = "rejected"
 
     CANCELLED = "cancelled"
 

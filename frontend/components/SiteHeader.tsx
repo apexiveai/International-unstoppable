@@ -14,6 +14,8 @@ type StoredUser = {
 
   username?: string;
 
+  is_admin?: boolean;
+
 };
 
 const navItems = [
@@ -84,7 +86,18 @@ export default function SiteHeader() {
 
     };
 
-  }, []);
+  }, [pathname]);
+
+  const visibleNavItems = [
+    ...navItems,
+    ...(user
+      ? [
+          { label: "Dashboard", href: "/dashboard" },
+          { label: "Subscriptions", href: "/subscriptions" },
+        ]
+      : []),
+    ...(user?.is_admin ? [{ label: "Admin", href: "/admin" }] : []),
+  ];
 
   function logout() {
 
@@ -163,7 +176,7 @@ export default function SiteHeader() {
 
         <nav className="hidden items-center gap-1 lg:flex">
 
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
 
             const active = isActive(item.href);
 
@@ -266,7 +279,7 @@ export default function SiteHeader() {
 
         <div className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 py-2">
 
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
 
             const active = isActive(item.href);
 

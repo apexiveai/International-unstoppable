@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -134,6 +134,8 @@ export default function CheckoutClient() {
 
   const searchParams = useSearchParams();
 
+  const router = useRouter();
+
   const productKey = searchParams.get("product");
 
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
@@ -245,6 +247,12 @@ export default function CheckoutClient() {
       : selectedPlan?.name ?? "Apexive AI Product";
 
   async function handleContinue() {
+
+    if (!localStorage.getItem("apexive_token")) {
+      const next = `/checkout?product=${encodeURIComponent(productKey ?? "")}`;
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
+      return;
+    }
 
     if (!selectedPlan) {
 

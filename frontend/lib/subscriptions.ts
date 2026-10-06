@@ -149,28 +149,6 @@ export function getMySubscriptions() {
 
 }
 
-export function subscribeToPlan(planId: number) {
-
-  return apiRequest<Subscription>(
-
-    "/api/subscriptions/subscribe",
-
-    {
-
-      method: "POST",
-
-      body: JSON.stringify({
-
-        plan_id: planId,
-
-      }),
-
-    },
-
-  );
-
-}
-
 export function cancelSubscription(subscriptionId: number) {
 
   return apiRequest<{

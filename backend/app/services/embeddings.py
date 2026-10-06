@@ -4,7 +4,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import HTTPException, status
 
-from app.config import settings
+from app.core.config import settings
 
 
 def embed_text(text: str) -> list[float] | None:

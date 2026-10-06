@@ -31,15 +31,9 @@ type RequireSubscriptionProps = {
 const productNames: Record<string, string> = {
 
   trademark: "Trademark Intelligence",
-
-  network: "Network Design & Quotation",
-
   workforce: "Autonomous Workforce",
-
-  trademark_workforce: "Trademark + Workforce",
-
-  telecom: "Telecom Network",
-
+  max_myanmar: "MAX-MYANMAR",
+  mna: "MYANMAR NATIONAL AIRLINES",
 };
 
 export default function RequireSubscription({

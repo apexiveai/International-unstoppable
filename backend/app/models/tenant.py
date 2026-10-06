@@ -41,7 +41,7 @@ class Workflow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-class AuditLog(Base):
+class TenantAuditLog(Base):
     __tablename__ = "tenant_audit_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -51,7 +51,24 @@ class AuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    @property
+    def actor_user_id(self) -> int | None:
+        return self.actor_id
+
+    @property
+    def target_type(self) -> str:
+        return self.entity_type
+
+    @property
+    def target_id(self) -> str | None:
+        return self.entity_id
+
+
+AuditLog = TenantAuditLog
 
 
 class Permission(Base):

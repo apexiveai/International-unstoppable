@@ -17,11 +17,10 @@ export type PaymentMethod =
   | "mpu";
 
 export type PaymentStatus =
-
   | "pending"
-
   | "processing"
-
+  | "verified"
+  | "rejected"
   | "paid"
 
   | "failed"
@@ -279,5 +278,14 @@ export async function getPaymentStatus(
     await getPayment(paymentId);
 
   return payment.status;
+}
 
+export async function getMyPayments(): Promise<{
+  items: CreatePaymentResponse[];
+  count: number;
+}> {
+  return apiRequest<{
+    items: CreatePaymentResponse[];
+    count: number;
+  }>("/api/payments/me");
 }

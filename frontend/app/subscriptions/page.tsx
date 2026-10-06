@@ -33,14 +33,9 @@ import {
 const productNames: Record<string, string> = {
 
   trademark: "Trademark Intelligence",
-
-  network: "Network Design & Quotation",
-
   workforce: "Autonomous Workforce",
-
-  trademark_workforce: "Trademark + Workforce",
-
-  telecom: "Telecom Network",
+  max_myanmar: "MAX-MYANMAR",
+  mna: "MYANMAR NATIONAL AIRLINES",
 
 };
 
@@ -374,7 +369,7 @@ export default function SubscriptionsPage() {
 
                 <p className="mt-2 text-3xl font-bold text-slate-950">
 
-                  5
+                  4
 
                 </p>
 
