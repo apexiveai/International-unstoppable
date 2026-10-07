@@ -21,7 +21,7 @@ async function fetchApi(
   } catch (reason) {
     const detail = reason instanceof Error ? ` (${reason.message})` : "";
     throw new Error(
-      `Unable to connect to the backend at ${API_URL}${detail}. Verify the Railway deployment and NEXT_PUBLIC_API_URL.`,
+      `Unable to connect to the backend at ${API_URL}${detail}. Verify the backend deployment and NEXT_PUBLIC_API_URL.`,
     );
   }
 }

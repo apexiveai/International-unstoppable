@@ -414,20 +414,14 @@ def compare_documents(
         )
 
     else:
-
         section_average = 0.0
 
-        overall_similarity = round(
-
-            text_similarity * 0.55
-
-            + structure_similarity * 0.25
-
-            + section_average * 0.20,
-
-            2,
-
-        )
+    overall_similarity = round(
+        text_similarity * 0.55
+        + structure_similarity * 0.25
+        + section_average * 0.20,
+        2,
+    )
 
     return {
 
