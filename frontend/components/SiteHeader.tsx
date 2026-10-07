@@ -8,6 +8,8 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { useEffect, useState } from "react";
 
+import { siteNavigationGroups } from "@/lib/site-navigation";
+
 type StoredUser = {
 
   display_name?: string;
@@ -19,25 +21,10 @@ type StoredUser = {
 };
 
 const navItems = [
-
   { label: "Forums", href: "/forums" },
-
   { label: "Articles", href: "/articles" },
-
   { label: "Projects", href: "/projects" },
-
   { label: "Resources", href: "/resources" },
-
-  { label: "Trademark Intelligence", href: "/trademark-intelligence" },
-
-  { label: "Workforce", href: "/workforce" },
-
-  { label: "Pricing", href: "/pricing" },
-
-  { label: "History", href: "/history" },
-
-  { label: "Search", href: "/search" },
-
 ];
 
 export default function SiteHeader() {
@@ -87,17 +74,6 @@ export default function SiteHeader() {
     };
 
   }, [pathname]);
-
-  const visibleNavItems = [
-    ...navItems,
-    ...(user
-      ? [
-          { label: "Dashboard", href: "/dashboard" },
-          { label: "Subscriptions", href: "/subscriptions" },
-        ]
-      : []),
-    ...(user?.is_admin ? [{ label: "Admin", href: "/admin" }] : []),
-  ];
 
   function logout() {
 
@@ -174,10 +150,8 @@ export default function SiteHeader() {
 
         {/* Desktop Navigation */}
 
-        <nav className="hidden items-center gap-1 lg:flex">
-
-          {visibleNavItems.map((item) => {
-
+        <nav className="hidden items-center gap-1 lg:flex" aria-label="Main navigation">
+          {navItems.map((item) => {
             const active = isActive(item.href);
 
             return (
@@ -202,11 +176,38 @@ export default function SiteHeader() {
                 {item.label}
 
               </Link>
-
             );
-
           })}
-
+          <details className="group relative">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-100 [&::-webkit-details-marker]:hidden">
+              More <span aria-hidden="true" className="text-xs">⌄</span>
+            </summary>
+            <div className="absolute right-0 top-full z-50 mt-2 grid w-[min(38rem,90vw)] grid-cols-3 gap-5 rounded-xl border border-slate-700 bg-[#0b1420] p-5 shadow-2xl">
+              {siteNavigationGroups.map((group) => (
+                <section key={group.label}>
+                  <h2 className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-300">
+                    {group.label}
+                  </h2>
+                  <ul className="space-y-1">
+                    {group.links.map((link) => (
+                      <li key={link.href}>
+                        <Link
+                          href={link.href}
+                          className={`block rounded-md px-2 py-1.5 text-sm transition ${
+                            isActive(link.href)
+                              ? "bg-cyan-400/10 text-cyan-300"
+                              : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                          }`}
+                        >
+                          {link.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </details>
         </nav>
 
         {/* Actions */}
@@ -274,13 +275,9 @@ export default function SiteHeader() {
       </div>
 
       {/* Mobile Navigation */}
-
-      <div className="border-t border-slate-800 lg:hidden">
-
-        <div className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 py-2">
-
-          {visibleNavItems.map((item) => {
-
+      <nav className="border-t border-slate-800 lg:hidden" aria-label="Main navigation">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-2">
+          {navItems.map((item) => {
             const active = isActive(item.href);
 
             return (
@@ -305,14 +302,36 @@ export default function SiteHeader() {
                 {item.label}
 
               </Link>
-
             );
-
           })}
-
+          <details className="group relative shrink-0">
+            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 [&::-webkit-details-marker]:hidden">
+              More <span aria-hidden="true">⌄</span>
+            </summary>
+            <div className="absolute right-0 top-full z-50 mt-2 grid w-[min(38rem,90vw)] grid-cols-2 gap-4 rounded-xl border border-slate-700 bg-[#0b1420] p-4 shadow-2xl">
+              {siteNavigationGroups.map((group) => (
+                <section key={group.label}>
+                  <h2 className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-300">
+                    {group.label}
+                  </h2>
+                  <ul className="space-y-1">
+                    {group.links.map((link) => (
+                      <li key={link.href}>
+                        <Link
+                          href={link.href}
+                          className="block rounded-md px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-white"
+                        >
+                          {link.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </details>
         </div>
-
-      </div>
+      </nav>
 
     </header>
 

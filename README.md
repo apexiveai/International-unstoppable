@@ -6,7 +6,6 @@ https://trademark-conflict-detector.vercel.app/
 https://vercel.com/bhone-htet-naings-projects/trademark-conflict-detector/EVLhqUVoVZC6R5BewikUmRo8eLBt
 
 8081
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8081
 **Recommended:** configure a webhook so your backend is notified when a verification decision is made. If you don't have one yet, create a webhook destination and add its signing secret to your `.env` as `DIDIT_WEBHOOK_SECRET` (see the Webhooks section below).
 
 ## Your Didit account
