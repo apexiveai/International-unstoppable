@@ -69,8 +69,8 @@ def health():
 app = CORSMiddleware(
     app=api,
     allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "https://www.apexiveai.com",
+        "https://apexiveai.com",
     ]
     + [
         origin.strip().rstrip("/")

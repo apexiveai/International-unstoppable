@@ -1,5 +1,37 @@
 You are integrating **Didit KYC (identity verification)**. Use a KYC workflow id.
 https://verify.didit.me/session/dLa60AsDfHDE
+(.venv) C:\Users\naing\Desktop\Sales\apexive-com\backend>railway connect
+
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8099
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --reload
+python -m pip install upgrade pip
+
+> Select service Postgres
+No SSH keys found in your SSH agent or ~/.ssh/
+
+Generate one with:
+  ssh-keygen -t ed25519
+
+Then run this command again.
+dpg-db3fou8m7kps73eggc20-a
+5432
+apexive_admin
+AhCIFxLhNWsDe3dtbewttPCNPjlcW4lq
+postgresql://apexive_admin:AhCIFxLhNWsDe3dtbewttPCNPjlcW4lq@dpg-db3fou8m7kps73eggc20-a/apexive_admin
+(.venv) C:\Users\naing\Desktop\Sales\apexive-com\backend>dir "%USERPROFILE%\.ssh"
+ Volume in drive C is Window
+ Volume Serial Number is 2C58-097D
+
+ Directory of C:\Users\naing\.ssh
+
+10/07/2026  03:14 PM    <DIR>          .
+10/07/2026  03:14 PM    <DIR>          ..
+10/07/2026  03:14 PM               399 id_ed25519
+10/07/2026  03:14 PM                93 id_ed25519.pub
+               2 File(s)            492 bytes
+               2 Dir(s)  178,688,339,968 bytes free
+
+(.venv) C:\Users\naing\Desktop\Sales\apexive-com\backend>
 
 git push -u origin master --force-with-lease /
 https://trademark-conflict-detector.vercel.app/
