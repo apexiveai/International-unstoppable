@@ -1,5 +1,5 @@
 from decimal import Decimal
-
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import desc, func, select
@@ -86,6 +86,154 @@ def _serialize_admin(account: User) -> dict:
     }
 
 
+@router.get("/users/pending")
+def list_pending_users(
+    admin: User = Depends(require_authenticated_admin),
+    db: Session = Depends(get_db),
+):
+    users = db.scalars(
+        select(User)
+        .where(
+            User.account_status == "PENDING",
+            User.is_admin.is_(False),
+            User.is_super_admin.is_(False),
+        )
+        .order_by(User.created_at.asc())
+    ).all()
+
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "display_name": user.display_name,
+            "account_status": user.account_status,
+            "created_at": user.created_at,
+        }
+        for user in users
+    ]
+
+
+@router.post("/users/{user_id}/approve")
+def approve_user(
+    user_id: int,
+    admin: User = Depends(require_authenticated_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if user.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot approve your own account.",
+        )
+
+    if user.is_admin or user.is_super_admin or user.role != "USER":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This endpoint only approves regular user accounts.",
+        )
+
+    if user.account_status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Account is already {user.account_status}.",
+        )
+
+    try:
+        user.account_status = "ACTIVE"
+        user.is_active = True
+        user.approved_at = datetime.now(timezone.utc)
+        user.approved_by = admin.id
+
+        write_system_audit_event(
+            db,
+            actor_user_id=admin.id,
+            action="user_account.approved",
+            target_type="user",
+            target_id=user.id,
+            tenant_id=user.tenant_id,
+            details={"account_status": "ACTIVE"},
+        )
+
+        db.commit()
+        db.refresh(user)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "User account approved.",
+        "user_id": user.id,
+        "account_status": user.account_status,
+        "is_active": user.is_active,
+    }
+
+
+@router.post("/users/{user_id}/reject")
+def reject_user(
+    user_id: int,
+    admin: User = Depends(require_authenticated_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if user.is_admin or user.is_super_admin or user.role != "USER":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This endpoint only rejects regular user accounts.",
+        )
+
+    if user.account_status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Account is already {user.account_status}.",
+        )
+
+    try:
+        user.account_status = "REJECTED"
+        user.is_active = False
+        user.approved_at = None
+        user.approved_by = admin.id
+
+        write_system_audit_event(
+            db,
+            actor_user_id=admin.id,
+            action="user_account.rejected",
+            target_type="user",
+            target_id=user.id,
+            tenant_id=user.tenant_id,
+            details={"account_status": "REJECTED"},
+        )
+
+        db.commit()
+        db.refresh(user)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "User registration rejected.",
+        "user_id": user.id,
+        "account_status": user.account_status,
+        "is_active": user.is_active,
+    }
+
+
 @router.get("/accounts")
 def list_admin_accounts(
     _admin: User = Depends(require_authenticated_admin),
@@ -136,6 +284,10 @@ def create_admin_account(
         tenant_id=admin.tenant_id,
         is_active=True,
         is_admin=True,
+        role="ADMIN",
+        account_status="ACTIVE",
+        approved_at=datetime.now(timezone.utc),
+        approved_by=admin.id,
     )
     db.add(account)
     db.flush()

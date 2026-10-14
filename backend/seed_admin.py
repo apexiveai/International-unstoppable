@@ -1,5 +1,7 @@
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import select
 
 from app.database import SessionLocal
@@ -8,6 +10,8 @@ from app.models import User
 
 
 def seed_admin() -> None:
+    load_dotenv(Path(__file__).resolve().with_name(".env"))
+
     username = os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "").strip()
     email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
     display_name = os.environ.get("BOOTSTRAP_ADMIN_DISPLAY_NAME", "").strip()

@@ -1,7 +1,8 @@
+from app.models import Tenant, User
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import or_, select
-
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -21,13 +22,10 @@ from app.database import get_db
 from app.models import Tenant, User
 
 from app.schemas.auth import (
-
     LoginRequest,
-
     RegisterRequest,
-
+    RegistrationPendingResponse,
     TokenResponse,
-
     UserResponse,
 
 )
@@ -166,7 +164,11 @@ def complete_face_session(
 
     )
 
-    if not user or not user.is_active:
+    if (
+        not user
+        or not user.is_active
+        or user.account_status != "ACTIVE"
+    ):
 
         raise HTTPException(
 
@@ -191,8 +193,8 @@ def complete_face_session(
 @router.post(
 
     "/face/register/complete",
-
-    response_model=TokenResponse,
+    
+    response_model=RegistrationPendingResponse,
 
     status_code=status.HTTP_201_CREATED,
 
@@ -228,89 +230,72 @@ def complete_face_registration(
 
     return register(payload, db)
 
+
 @router.post(
-
     "/register",
-
-    response_model=TokenResponse,
-
+    response_model=RegistrationPendingResponse,
     status_code=status.HTTP_201_CREATED,
-
 )
-
 def register(
-
     payload: RegisterRequest,
-
     db: Session = Depends(get_db),
-
 ):
+    username = payload.username.strip()
+    email = str(payload.email).strip().lower()
 
     existing = db.scalar(
-
         select(User).where(
-
             or_(
-
-                User.email == payload.email,
-
-                User.username == payload.username,
-
+                User.email == email,
+                User.username == username,
             )
-
         )
-
     )
 
     if existing:
-
         raise HTTPException(
-
-            status_code=409,
-
+            status_code=status.HTTP_409_CONFLICT,
             detail="Email or username already exists",
-
         )
 
     user = User(
-
-        username=payload.username,
-
-        email=payload.email,
-
-        password_hash=hash_password(
-
-            payload.password
-
-        ),
-
-        display_name=payload.display_name,
+        username=username,
+        email=email,
+        password_hash=hash_password(payload.password),
+        display_name=payload.display_name.strip(),
+        is_active=False,
+        is_admin=False,
+        is_super_admin=False,
+        role="USER",
+        account_status="PENDING",
+        approved_at=None,
+        approved_by=None,
     )
+
     tenant = Tenant(
-        name=f"{payload.display_name} Workspace",
-        slug=f"{payload.username}-workspace",
+        name=f"{payload.display_name.strip()} Workspace",
+        slug=f"{username}-workspace",
     )
-    db.add(tenant)
-    db.flush()
-    user.tenant_id = tenant.id
 
-    db.add(user)
+    try:
+        db.add(tenant)
+        db.flush()
 
-    db.commit()
+        user.tenant_id = tenant.id
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    db.refresh(user)
-
-    token = create_access_token(user.id)
+    except Exception:
+        db.rollback()
+        raise
 
     return {
-
-        "access_token": token,
-
-        "token_type": "bearer",
-
+        "message": "Registration successful. Please wait for administrator approval.",
+        "account_status": user.account_status,
         "user": user,
-
     }
+
 
 @router.post(
     "/login",
@@ -339,11 +324,25 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not user.is_active:
+
+    if user.account_status == "PENDING":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+            detail="Your account is awaiting administrator approval.",
         )
+
+    if user.account_status == "REJECTED":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account registration was rejected.",
+        )
+
+    if user.account_status != "ACTIVE" or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
+        )
+
 
     token = create_access_token(user.id)
 

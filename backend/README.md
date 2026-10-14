@@ -67,7 +67,10 @@ setting `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_EMAIL`,
 `BOOTSTRAP_ADMIN_DISPLAY_NAME`, and `BOOTSTRAP_ADMIN_PASSWORD` in a secure
 secret mechanism, then run `python seed_admin.py`. The password must be at
 least 16 characters. This command never creates or promotes a Super Admin.
-Bootstrap values should be removed from the deployment environment after use.
+For local setup, put these values in `backend/.env` (not `.env.example`); the
+seed command loads that file automatically. After applying migrations, run
+`.\.venv\Scripts\python.exe seed_admin.py` from `backend`. Bootstrap values
+should be removed from the deployment environment or local `.env` after use.
 For the first Super Admin, have an authorized database operator promote an
 existing, active administrator in a reviewed transaction and record the
 approval reference in `system_audit_events`; do not promote a named account by
