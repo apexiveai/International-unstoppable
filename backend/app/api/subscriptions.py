@@ -129,11 +129,9 @@ def get_my_subscriptions(
 def cancel_my_subscription(
     subscription_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    admin: User = Depends(require_admin),
 ):
     subscription = _get_subscription(db, subscription_id)
-    if subscription.tenant_id != _tenant_id(user):
-        raise HTTPException(status_code=404, detail="Subscription not found.")
     if subscription.status == "cancelled":
         return _serialize_subscription(subscription)
     if subscription.status not in {"pending", "active", "suspended"}:
@@ -141,22 +139,9 @@ def cancel_my_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="This subscription cannot be cancelled.",
         )
-    old_status = subscription.status
-    subscription.status = "cancelled"
-    subscription.cancelled_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    write_audit_log(
-        db,
-        tenant_id=subscription.tenant_id,
-        actor_user_id=user.id,
-        action="subscription.cancelled",
-        target_type="subscription",
-        target_id=subscription.id,
-        old_value={"status": old_status},
-        new_value={"status": subscription.status},
+    return _admin_change_status(
+        db, admin, subscription, "cancelled", "subscription.cancelled"
     )
-    db.commit()
-    db.refresh(subscription)
-    return _serialize_subscription(subscription)
 
 
 @router.get("/subscriptions/access/{product_key}")
@@ -616,6 +601,168 @@ class AdminSubscriptionPriceRequest(BaseModel):
     price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
 
 
+class AdminSubscriptionCreateRequest(BaseModel):
+    tenant_id: int = Field(gt=0)
+    plan_id: int = Field(gt=0)
+    duration_days: int = Field(default=30, ge=1, le=3660)
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reason(self):
+        if len(self.reason.strip()) < 3:
+            raise ValueError("An approval reason is required.")
+        return self
+
+
+class AdminSubscriptionRenewRequest(BaseModel):
+    duration_days: int = Field(default=30, ge=1, le=3660)
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reason(self):
+        if len(self.reason.strip()) < 3:
+            raise ValueError("An approval reason is required.")
+        return self
+
+
+@router.post("/admin/subscriptions", status_code=status.HTTP_201_CREATED)
+def admin_create_subscription(
+    payload: AdminSubscriptionCreateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    tenant = db.get(Tenant, payload.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    plan = db.get(SubscriptionPlan, payload.plan_id)
+    if plan is None or not plan.is_active:
+        raise HTTPException(
+            status_code=404, detail="Active subscription plan not found."
+        )
+    require_product_key(plan.product_key)
+    if not product_is_published(plan.product_key):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This product is not published for subscription access.",
+        )
+
+    existing = db.scalar(
+        select(Subscription.id).where(
+            Subscription.tenant_id == tenant.id,
+            Subscription.plan_id == plan.id,
+            Subscription.status == "active",
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active subscription already exists for this plan.",
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    subscription = Subscription(
+        tenant_id=tenant.id,
+        plan_id=plan.id,
+        status="active",
+        price=plan.monthly_price,
+        currency=plan.currency,
+        billing_cycle=plan.billing_cycle,
+        start_date=now,
+        current_period_end=now + timedelta(days=payload.duration_days),
+        admin_access_reason=payload.reason.strip(),
+    )
+    db.add(subscription)
+    db.flush()
+    write_audit_log(
+        db,
+        tenant_id=tenant.id,
+        actor_user_id=admin.id,
+        action="subscription.admin_created",
+        target_type="subscription",
+        target_id=subscription.id,
+        new_value={
+            "plan_id": plan.id,
+            "duration_days": payload.duration_days,
+            "reason": payload.reason.strip(),
+        },
+    )
+    db.commit()
+    db.refresh(subscription)
+    return _serialize_subscription(_get_subscription(db, subscription.id))
+
+
+@router.post("/admin/subscriptions/{subscription_id}/renew")
+def admin_renew_subscription(
+    subscription_id: int,
+    payload: AdminSubscriptionRenewRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    subscription = _get_subscription(db, subscription_id)
+    require_product_key(subscription.plan.product_key)
+    if not product_is_published(subscription.plan.product_key):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This product is not published for subscription access.",
+        )
+    if subscription.status not in {"active", "expired"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only active or expired subscriptions can be renewed.",
+        )
+
+    another_active = db.scalar(
+        select(Subscription.id).where(
+            Subscription.tenant_id == subscription.tenant_id,
+            Subscription.plan_id == subscription.plan_id,
+            Subscription.status == "active",
+            Subscription.id != subscription.id,
+        )
+    )
+    if another_active is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another active subscription already exists for this plan.",
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    old_end = subscription.current_period_end
+    if old_end is not None and old_end.tzinfo is not None:
+        old_end = old_end.astimezone(timezone.utc).replace(tzinfo=None)
+    renewal_start = max(now, old_end) if old_end is not None else now
+    previous_status = subscription.status
+    if previous_status == "expired":
+        subscription.start_date = now
+    subscription.status = "active"
+    subscription.current_period_end = renewal_start + timedelta(
+        days=payload.duration_days
+    )
+    subscription.cancelled_at = None
+    subscription.admin_access_reason = payload.reason.strip()
+    write_audit_log(
+        db,
+        tenant_id=subscription.tenant_id,
+        actor_user_id=admin.id,
+        action="subscription.renewed",
+        target_type="subscription",
+        target_id=subscription.id,
+        old_value={
+            "status": previous_status,
+            "current_period_end": old_end.isoformat() if old_end else None,
+        },
+        new_value={
+            "status": subscription.status,
+            "current_period_end": subscription.current_period_end.isoformat(),
+            "duration_days": payload.duration_days,
+            "reason": payload.reason.strip(),
+        },
+    )
+    db.commit()
+    db.refresh(subscription)
+    return _serialize_subscription(subscription)
+
+
 @router.post("/admin/subscriptions/{subscription_id}/activate")
 def activate_subscription(
     subscription_id: int,
@@ -690,6 +837,11 @@ def activate_subscription(
     subscription.start_date = now
     subscription.current_period_end = now + timedelta(days=payload.duration_days)
     subscription.cancelled_at = None
+    subscription.admin_access_reason = (
+        (payload.override_reason or "").strip()
+        if payload.override_verified_payment
+        else None
+    )
     if payment is not None:
         payment.subscription_id = subscription.id
     write_audit_log(

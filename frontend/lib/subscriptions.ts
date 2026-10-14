@@ -170,30 +170,6 @@ export function getMySubscriptions() {
 
 }
 
-export function cancelSubscription(subscriptionId: number) {
-
-  return apiRequest<{
-
-    id: number;
-
-    status: string;
-
-    cancelled_at: string;
-
-  }>(
-
-    `/api/subscriptions/${subscriptionId}/cancel`,
-
-    {
-
-      method: "POST",
-
-    },
-
-  );
-
-}
-
 export function getProductAccess(productKey: string) {
 
   return apiRequest<SubscriptionAccess>(

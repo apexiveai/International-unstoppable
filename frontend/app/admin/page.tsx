@@ -10,12 +10,14 @@ import {
   createAdminAccount,
   createAdminClient,
   createAdminProductGrant,
+  createAdminSubscription,
   getAdminAccounts,
   getAdminDashboard,
   getAdminPlanSettings,
   getAdminProductGrants,
   refundAdminPayment,
   rejectAdminPayment,
+  renewAdminSubscription,
   revokeAdminProductGrant,
   resetAdminClientPassword,
   setAdminAccountStatus,
@@ -364,6 +366,71 @@ function AdminDashboard() {
     }
   }
 
+  async function submitAdminSubscription(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const tenantId = Number(form.get("tenant_id"));
+    const planId = Number(form.get("plan_id"));
+    const durationDays = Number(form.get("duration_days"));
+    const reason = String(form.get("reason") ?? "").trim();
+    if (
+      !Number.isInteger(tenantId) ||
+      tenantId <= 0 ||
+      !Number.isInteger(planId) ||
+      planId <= 0 ||
+      !Number.isInteger(durationDays) ||
+      durationDays < 1 ||
+      durationDays > 3660 ||
+      reason.length < 3
+    ) {
+      setError("Choose a client and plan, enter a valid duration, and provide an approval reason.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await createAdminSubscription({
+        tenant_id: tenantId,
+        plan_id: planId,
+        duration_days: durationDays,
+        reason,
+      });
+      setNotice("Subscription created and activated.");
+      formElement.reset();
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to create subscription.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function renewSubscription(subscription: AdminSubscription) {
+    const durationInput = window.prompt(
+      "Number of days to add to this subscription:",
+      "30",
+    );
+    if (durationInput === null) return;
+    const durationDays = Number(durationInput);
+    if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3660) {
+      setError("Enter a whole number of days between 1 and 3660.");
+      return;
+    }
+    const reason = window.prompt("Enter the approval reason for this renewal:");
+    if (!reason?.trim()) return;
+    await runAction(
+      () =>
+        renewAdminSubscription(subscription.id, {
+          duration_days: durationDays,
+          reason: reason.trim(),
+        }),
+      `Subscription #${subscription.id} extended by ${durationDays} days.`,
+    );
+  }
+
   async function overrideSubscriptionActivation(subscription: AdminSubscription) {
     const reason = window.prompt(
       "Enter the business reason for activating without verified payment:",
@@ -691,9 +758,34 @@ function AdminDashboard() {
 
                 <section id="subscriptions" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><h2 className="text-lg font-bold text-white">Subscriptions</h2><p className="mt-1 text-sm text-slate-400">Review status and set the amount for each subscription. Changing a subscription amount does not rewrite historical payments.</p></div>
+                    <div><h2 className="text-lg font-bold text-white">Subscriptions</h2><p className="mt-1 text-sm text-slate-400">Manage client subscriptions, payment requests, renewals, and cancellations. Manual subscriptions grant access immediately and require an approval reason.</p></div>
                     <label className="flex items-center gap-2 text-sm text-slate-400">Status<select value={subscriptionFilter} onChange={(event) => setSubscriptionFilter(event.target.value)} className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-slate-100">{subscriptionStatuses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
                   </div>
+                  <form onSubmit={(event) => void submitAdminSubscription(event)} className="mt-5 grid gap-3 rounded-xl border border-slate-800 bg-[#080e18] p-4 sm:grid-cols-2 xl:grid-cols-5">
+                    <label className="grid gap-1 text-xs text-slate-400">Client
+                      <select name="tenant_id" required defaultValue="" className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white">
+                        <option value="" disabled>Select client</option>
+                        {data.clients.filter((client) => client.tenant_id !== null).map((client) => (
+                          <option key={client.id} value={client.tenant_id ?? ""}>{client.display_name} · {client.email}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1 text-xs text-slate-400">Plan
+                      <select name="plan_id" required defaultValue="" className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white">
+                        <option value="" disabled>Select plan</option>
+                        {plans.filter((plan) => plan.is_active && products.some((product) => product.product_key === plan.product_key)).map((plan) => (
+                          <option key={plan.id} value={plan.id}>{plan.name} · {plan.monthly_price} {plan.currency}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-1 text-xs text-slate-400">Duration (days)
+                      <input name="duration_days" type="number" min="1" max="3660" step="1" defaultValue="30" required className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white" />
+                    </label>
+                    <label className="grid gap-1 text-xs text-slate-400 sm:col-span-2">Approval reason
+                      <input name="reason" minLength={3} maxLength={2000} required placeholder="Record the authorization for this manual subscription" className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white" />
+                    </label>
+                    <button disabled={busy || !data.clients.some((client) => client.tenant_id !== null) || !plans.some((plan) => plan.is_active && products.some((product) => product.product_key === plan.product_key))} className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50 sm:justify-self-start">Create and activate</button>
+                  </form>
                   <div className="mt-5 overflow-x-auto">
                     <table className="w-full min-w-[980px] text-left text-sm">
                       <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Subscription</th><th>Tenant</th><th>Product</th><th>Amount</th><th>Status</th><th>Period ends</th><th className="text-right">Actions</th></tr></thead>
@@ -721,6 +813,7 @@ function AdminDashboard() {
                                 </>
                               )}
                               {subscription.status === "active" && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "suspend"), `Subscription #${subscription.id} suspended.`)} className="font-semibold text-amber-300 disabled:opacity-50">Suspend</button>}
+                              {["active", "expired"].includes(subscription.status) && <button disabled={busy} onClick={() => void renewSubscription(subscription)} className="font-semibold text-emerald-300 disabled:opacity-50">Extend</button>}
                               {["pending", "active", "suspended"].includes(subscription.status) && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "cancel"), `Subscription #${subscription.id} cancelled.`)} className="font-semibold text-rose-300 disabled:opacity-50">Cancel</button>}
                               </div>
                             </td>

@@ -12,7 +12,7 @@ export default function LoginPage() {
 
   const router = useRouter();
 
-  const [email, setEmail] = useState("");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
 
   const [password, setPassword] = useState("");
 
@@ -154,7 +154,19 @@ export default function LoginPage() {
 
   async function startFaceAuthentication() {
 
-    if (!email.trim()) {
+    if (!loginIdentifier.trim()) {
+
+      setError(
+
+        "Enter your account email before starting face authentication.",
+
+      );
+
+      return;
+
+    }
+
+    if (!loginIdentifier.includes("@")) {
 
       setError(
 
@@ -196,7 +208,7 @@ export default function LoginPage() {
 
           body: JSON.stringify({
 
-            email: email.trim(),
+            email: loginIdentifier.trim(),
 
             return_to: returnTo,
 
@@ -264,7 +276,7 @@ export default function LoginPage() {
     try {
       const formData = new URLSearchParams();
 
-      formData.set("username", email.trim());
+      formData.set("username", loginIdentifier.trim());
       formData.set("password", password);
 
       const response = await fetch(
@@ -380,27 +392,27 @@ export default function LoginPage() {
 
           <label className="block text-sm font-medium text-slate-700">
 
-            Email
+            Email or username
 
           </label>
 
           <input
 
-            type="email"
+            type="text"
 
             autoCapitalize="none"
 
             autoCorrect="off"
 
-            value={email}
+            value={loginIdentifier}
 
             onChange={(event) =>
 
-              setEmail(event.target.value)
+              setLoginIdentifier(event.target.value)
 
             }
 
-            placeholder="you@example.com"
+            placeholder="you@example.com or username"
 
             required
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -17,10 +17,18 @@ import seed_admin
 
 class SeedAdminTests(unittest.TestCase):
     def setUp(self):
+        self.database_name = "apexive_community_app"
         self.engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
+        )
+        event.listen(
+            self.engine,
+            "connect",
+            lambda connection, _: connection.create_function(
+                "current_database", 0, lambda: self.database_name
+            ),
         )
         Base.metadata.create_all(self.engine, tables=[User.__table__])
         self.session_factory = sessionmaker(bind=self.engine)
@@ -46,9 +54,14 @@ class SeedAdminTests(unittest.TestCase):
                 patch.dict(os.environ, {}, clear=True),
                 patch("seed_admin.load_dotenv", side_effect=load_test_env),
                 patch("seed_admin.SessionLocal", self.session_factory),
-                patch("seed_admin.hash_password", return_value="hashed-password"),
+                patch(
+                    "seed_admin.hash_password", return_value="hashed-password"
+                ) as hash_password,
             ):
                 seed_admin.seed_admin()
+                hash_password.assert_called_once_with(
+                    "a-test-password-at-least-16"
+                )
 
         with Session(self.engine) as db:
             admin = db.scalar(
@@ -59,6 +72,36 @@ class SeedAdminTests(unittest.TestCase):
         self.assertTrue(admin.is_active)
         self.assertTrue(admin.is_admin)
         self.assertFalse(admin.is_super_admin)
+
+    def test_refuses_to_create_an_admin_in_another_database(self):
+        self.database_name = "apexive_community"
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            env_file.write_text(
+                "BOOTSTRAP_ADMIN_USERNAME=bootstrap-admin\n"
+                "BOOTSTRAP_ADMIN_EMAIL=admin@example.test\n"
+                "BOOTSTRAP_ADMIN_DISPLAY_NAME=Bootstrap Admin\n"
+                "BOOTSTRAP_ADMIN_PASSWORD=a-test-password-at-least-16\n",
+                encoding="utf-8",
+            )
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch(
+                    "seed_admin.load_dotenv",
+                    side_effect=lambda _path: load_dotenv(env_file),
+                ),
+                patch("seed_admin.SessionLocal", self.session_factory),
+                patch("seed_admin.hash_password", return_value="hashed-password"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Refusing to modify database"
+                ):
+                    seed_admin.seed_admin()
+
+        with Session(self.engine) as db:
+            self.assertIsNone(
+                db.scalar(select(User).where(User.username == "bootstrap-admin"))
+            )
 
 
 if __name__ == "__main__":

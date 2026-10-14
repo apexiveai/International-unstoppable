@@ -21,13 +21,8 @@ import {
 } from "lucide-react";
 
 import {
-
-  cancelSubscription,
-
   getMySubscriptions,
-
   type Subscription,
-
 } from "@/lib/subscriptions";
 
 const productNames: Record<string, string> = {
@@ -95,8 +90,6 @@ export default function SubscriptionsPage() {
 
   const [error, setError] = useState("");
 
-  const [cancellingId, setCancellingId] = useState<number | null>(null);
-
   function handleRetry() {
     setLoading(true);
     setError("");
@@ -143,47 +136,6 @@ export default function SubscriptionsPage() {
 
   }, []);
 
-  async function handleCancel(subscriptionId: number) {
-
-    const confirmed = window.confirm(
-
-      "Are you sure you want to cancel this subscription?",
-
-    );
-
-    if (!confirmed) {
-
-      return;
-
-    }
-
-    try {
-
-      setCancellingId(subscriptionId);
-      await cancelSubscription(subscriptionId);
-      setSubscriptions(await getMySubscriptions());
-      setError("");
-
-    } catch (err) {
-
-      window.alert(
-
-        err instanceof Error
-
-          ? err.message
-
-          : "Unable to cancel subscription.",
-
-      );
-
-    } finally {
-
-      setCancellingId(null);
-
-    }
-
-  }
-
   const activeSubscriptions = subscriptions.filter(
 
     (subscription) =>
@@ -218,9 +170,9 @@ export default function SubscriptionsPage() {
 
             <p className="mt-4 text-sm leading-7 text-slate-500">
 
-              Manage your active Apexive Community products,
-
-              subscription periods, and billing status.
+              View your active Apexive Community products,
+              subscription periods, and billing status. Contact an
+              administrator to change or cancel a subscription.
 
             </p>
 
@@ -590,42 +542,6 @@ export default function SubscriptionsPage() {
                         </div>
 
                       </div>
-
-                      {active && (
-
-                        <div className="mt-6 flex justify-end">
-
-                          <button
-
-                            type="button"
-
-                            disabled={
-
-                              cancellingId === subscription.id
-
-                            }
-
-                            onClick={() =>
-
-                              handleCancel(subscription.id)
-
-                            }
-
-                            className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-
-                          >
-
-                            {cancellingId === subscription.id
-
-                              ? "Cancelling..."
-
-                              : "Cancel Subscription"}
-
-                          </button>
-
-                        </div>
-
-                      )}
 
                     </div>
 

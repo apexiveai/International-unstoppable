@@ -232,15 +232,23 @@ def tenant_product_access(
         product_subscriptions.order_by(desc(Subscription.created_at)).limit(1)
     )
 
-    paid_access = bool(
-        active_subscription
-        and can_access_product(active_subscription, product_key)
-        and db.scalar(
+    verified_payment = (
+        db.scalar(
             select(Payment.id).where(
                 Payment.subscription_id == active_subscription.id,
                 Payment.tenant_id == tenant_id,
                 Payment.status == "verified",
             )
+        )
+        if active_subscription is not None
+        else None
+    )
+    paid_access = bool(
+        active_subscription
+        and can_access_product(active_subscription, product_key)
+        and (
+            active_subscription.admin_access_reason is not None
+            or verified_payment is not None
         )
     )
     grant = db.scalar(

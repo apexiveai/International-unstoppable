@@ -300,6 +300,31 @@ export function updateAdminSubscription(
   );
 }
 
+export function createAdminSubscription(payload: {
+  tenant_id: number;
+  plan_id: number;
+  duration_days: number;
+  reason: string;
+}) {
+  return adminRequest<AdminSubscription>("/api/admin/subscriptions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renewAdminSubscription(
+  subscriptionId: number,
+  payload: { duration_days: number; reason: string },
+) {
+  return adminRequest<AdminSubscription>(
+    `/api/admin/subscriptions/${subscriptionId}/renew`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export function updateAdminSubscriptionPrice(
   subscriptionId: number,
   price: string,

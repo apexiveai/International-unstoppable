@@ -302,6 +302,111 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         response = self.client.get("/api/admin/accounts")
         self.assertEqual(response.status_code, 403)
 
+    def test_customer_cannot_cancel_subscription(self):
+        subscription = self.add_subscription()
+        self.db.commit()
+
+        response = self.client.post(
+            f"/api/subscriptions/{subscription.id}/cancel"
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.db.get(Subscription, subscription.id).status, "active")
+
+    def test_customer_can_submit_payment_request_for_admin_review(self):
+        response = self.client.post(
+            "/api/payments/create",
+            json={"plan_id": self.plan.id, "payment_method": "card"},
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        payment = response.json()
+        self.assertEqual(payment["status"], "pending")
+        self.assertIsNotNone(payment["subscription_id"])
+        subscription = self.db.get(Subscription, payment["subscription_id"])
+        self.assertEqual(subscription.status, "pending")
+
+    def test_super_admin_can_create_a_manual_subscription(self):
+        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+
+        response = self.client.post(
+            "/api/admin/subscriptions",
+            json={
+                "tenant_id": self.tenant_b.id,
+                "plan_id": self.plan.id,
+                "duration_days": 45,
+                "reason": "Approved enterprise subscription",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        created = response.json()
+        self.assertEqual(created["tenant_id"], self.tenant_b.id)
+        self.assertEqual(created["status"], "active")
+        self.assertEqual(created["price"], "10.00")
+        self.db.expire_all()
+        self.assertTrue(
+            tenant_product_access(self.db, self.tenant_b.id, "trademark")[
+                "has_access"
+            ]
+        )
+        audit = self.db.query(TenantAuditLog).filter_by(
+            action="subscription.admin_created"
+        ).one()
+        self.assertEqual(audit.actor_user_id, self.super_admin.id)
+
+    def test_customer_cannot_create_a_manual_subscription(self):
+        response = self.client.post(
+            "/api/admin/subscriptions",
+            json={
+                "tenant_id": self.tenant_a.id,
+                "plan_id": self.plan.id,
+                "duration_days": 30,
+                "reason": "Approved subscription",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_super_admin_can_renew_expired_subscription(self):
+        subscription = self.add_subscription(
+            status="expired", end_delta=timedelta(days=-10)
+        )
+        previous_end = subscription.current_period_end
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+        expected_end = max(
+            datetime.now(timezone.utc).replace(tzinfo=None),
+            previous_end.replace(tzinfo=None),
+        ) + timedelta(days=30)
+
+        response = self.client.post(
+            f"/api/admin/subscriptions/{subscription.id}/renew",
+            json={
+                "duration_days": 30,
+                "reason": "Renewal approved",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        renewed = response.json()
+        self.assertEqual(renewed["status"], "active")
+        actual_end = datetime.fromisoformat(renewed["current_period_end"])
+        self.assertLess(
+            abs((actual_end - expected_end).total_seconds()),
+            5,
+        )
+        self.db.expire_all()
+        self.assertTrue(
+            tenant_product_access(self.db, self.tenant_a.id, "trademark")[
+                "has_access"
+            ]
+        )
+        audit = self.db.query(TenantAuditLog).filter_by(
+            action="subscription.renewed"
+        ).one()
+        self.assertEqual(audit.actor_user_id, self.super_admin.id)
+
     def test_super_administrator_can_use_platform_admin_routes(self):
         api.dependency_overrides[get_current_user] = lambda: self.super_admin
         response = self.client.get("/api/admin/accounts")

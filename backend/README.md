@@ -24,16 +24,25 @@ The normal billing flow is:
    `/api/admin/payments/{payment_id}`.
 3. Only a verified payment can be used to activate its linked subscription
    through `/api/admin/subscriptions/{subscription_id}/activate`.
-4. The client checks access with
+4. A Super Admin can directly create an access-granting subscription with
+   `POST /api/admin/subscriptions`, extend an active or expired subscription
+   with `POST /api/admin/subscriptions/{subscription_id}/renew`, and cancel
+   subscriptions through `/api/admin/subscriptions/{subscription_id}/cancel`.
+   These manual actions require an approval reason, grant access only for the
+   published product period, and are recorded in tenant audit logs. Customers
+   can submit payment requests and view subscriptions but cannot create,
+   extend, or cancel subscriptions directly.
+5. The client checks access with
    `GET /api/subscriptions/access/{product_key}`. Paid access requires a
    matching active subscription, valid dates, and a verified payment scoped to
-   that subscription and tenant.
-5. A Super Admin can issue time-bounded trial or complimentary grants through
+   that subscription and tenant. A manual Admin subscription is instead
+   authorized by its recorded Admin approval reason.
+6. A Super Admin can issue time-bounded trial or complimentary grants through
    `POST /api/admin/product-grants`, list them through
    `GET /api/admin/product-grants`, and revoke them through
    `POST /api/admin/product-grants/{grant_id}/revoke`. Grants are tenant- and
    product-scoped and recorded in the system audit trail.
-6. An entitled client requests a one-time product handoff at
+7. An entitled client requests a one-time product handoff at
    `POST /api/subscriptions/products/{product_key}/launch`. The plaintext code
    is returned only for that issuance; exchange it at
    `POST /api/subscriptions/launch/exchange`. Codes are hashed at rest,
@@ -41,7 +50,7 @@ The normal billing flow is:
    `PRODUCT_LAUNCH_CODE_TTL_SECONDS` (default 180 seconds; allowed range
    30–900). Super Admins can list code metadata or revoke unused codes through
    `/api/admin/product-launch-codes`.
-7. Tenant-scoped subscription/payment changes are available in
+8. Tenant-scoped subscription/payment changes are available in
    `tenant_audit_logs` at `GET /api/admin/audit-logs`. Privileged operations,
    grant lifecycle changes, code lifecycle changes, and bootstrap actions are
    recorded in `system_audit_events`, exposed at
@@ -71,6 +80,12 @@ For local setup, put these values in `backend/.env` (not `.env.example`); the
 seed command loads that file automatically. After applying migrations, run
 `.\.venv\Scripts\python.exe seed_admin.py` from `backend`. Bootstrap values
 should be removed from the deployment environment or local `.env` after use.
+For safety, the bootstrap command only writes to the dedicated
+`apexive_community_app` or `apexive_admin_eisn` database. It creates an
+ordinary administrator, never a Super Admin, and updates an existing ordinary
+bootstrap account in place rather than deleting an account that may have
+related records. Sign in with the configured email (case-insensitive) or
+username.
 For the first Super Admin, have an authorized database operator promote an
 existing, active administrator in a reviewed transaction and record the
 approval reference in `system_audit_events`; do not promote a named account by
@@ -124,12 +139,14 @@ until their prices are confirmed and added to `app/seed_subscription_plans.py`.
 
 ## Fresh PostgreSQL database
 
-For a new, empty PostgreSQL database, the complete schema can be bootstrapped
-from the SQL file instead of applying the migrations:
+Keep any legacy database in place. For a fresh local community database, create
+`apexive_community_app` using an authorized PostgreSQL role, then point the
+backend `DATABASE_URL` in `backend/.env` at that database. For example, an
+authorized operator can run:
 
 ```powershell
-createdb apexive_community
-psql -d apexive_community -v ON_ERROR_STOP=1 -f .\database.sql
+createdb apexive_community_app
+psql -d apexive_community_app -v ON_ERROR_STOP=1 -f .\database.sql
 ```
 
 `database.sql` bootstraps the schema at its recorded Alembic revision, seeds
@@ -137,10 +154,12 @@ the forum category tree and currently priced subscription plans, and does not
 create an administrator account or credentials. After running it against an
 empty database, run `alembic upgrade head` to apply any later migrations before
 starting the application.
-If the database has already been created by your hosting provider, skip
-`createdb` and run only the `psql` command. Run the SQL file once against an
-empty database. For an existing database, continue to use
-`alembic upgrade head` and the seed scripts above.
+If the application database role cannot create databases, have an authorized
+PostgreSQL operator create the empty database and grant ownership to the
+application role before running `psql`. Run the SQL file once against an empty
+database. For an existing application database, continue to use
+`alembic upgrade head` and the seed scripts above; do not initialize a legacy
+database by running this file against it.
 
 ## Billing and deployment limits
 

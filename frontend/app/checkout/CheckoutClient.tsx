@@ -566,7 +566,8 @@ export default function CheckoutClient() {
 
               Payment is currently pending verification.
 
-              Subscription access will only be activated after
+              An administrator will verify the payment and activate
+              your subscription. Access is only available after
 
               verified payment confirmation.
 

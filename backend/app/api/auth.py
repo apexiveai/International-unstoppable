@@ -1,7 +1,7 @@
 from app.models import Tenant, User
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
@@ -305,11 +305,12 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
+    identifier = form_data.username.strip()
     user = db.scalar(
         select(User).where(
             or_(
-                User.username == form_data.username,
-                User.email == form_data.username,
+                User.username == identifier,
+                func.lower(User.email) == identifier.lower(),
             )
         )
     )
