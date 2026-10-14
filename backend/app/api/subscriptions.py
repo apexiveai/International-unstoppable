@@ -13,7 +13,7 @@ from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import create_access_token, get_current_user
-from app.core.authorization import require_super_admin as require_admin
+from app.core.authorization import require_admin
 from app.core.authorization import require_super_admin
 from app.core.config import settings
 from app.database import get_db
@@ -592,8 +592,13 @@ class ActivateSubscriptionRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_override_reason(self):
-        if self.override_verified_payment and not self.override_reason:
-            raise ValueError("A reason is required when overriding payment verification.")
+        if (
+            self.override_verified_payment
+            and len((self.override_reason or "").strip()) < 3
+        ):
+            raise ValueError(
+                "A reason is required when overriding payment verification."
+            )
         return self
 
 
@@ -623,6 +628,30 @@ class AdminSubscriptionRenewRequest(BaseModel):
         if len(self.reason.strip()) < 3:
             raise ValueError("An approval reason is required.")
         return self
+
+
+@router.get("/admin/subscription-clients")
+def admin_list_subscription_clients(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    clients = db.scalars(
+        select(User)
+        .where(User.is_admin.is_(False), User.tenant_id.is_not(None))
+        .order_by(User.display_name, User.id)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": client.id,
+                "tenant_id": client.tenant_id,
+                "username": client.username,
+                "email": client.email,
+                "display_name": client.display_name,
+            }
+            for client in clients
+        ]
+    }
 
 
 @router.post("/admin/subscriptions", status_code=status.HTTP_201_CREATED)
@@ -856,7 +885,11 @@ def activate_subscription(
             "status": subscription.status,
             "payment_id": payment.id if payment else None,
             "payment_override": payload.override_verified_payment,
-            "override_reason": payload.override_reason,
+            "override_reason": (
+                payload.override_reason.strip()
+                if payload.override_reason
+                else None
+            ),
             "current_period_end": subscription.current_period_end.isoformat(),
         },
     )
@@ -976,7 +1009,7 @@ def admin_audit_logs(
     tenant_id: int | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin),
+    _admin: User = Depends(require_super_admin),
 ):
     query = select(TenantAuditLog)
     if tenant_id is not None:

@@ -24,7 +24,7 @@ The normal billing flow is:
    `/api/admin/payments/{payment_id}`.
 3. Only a verified payment can be used to activate its linked subscription
    through `/api/admin/subscriptions/{subscription_id}/activate`.
-4. A Super Admin can directly create an access-granting subscription with
+4. An Admin can directly create an access-granting subscription with
    `POST /api/admin/subscriptions`, extend an active or expired subscription
    with `POST /api/admin/subscriptions/{subscription_id}/renew`, and cancel
    subscriptions through `/api/admin/subscriptions/{subscription_id}/cancel`.
@@ -80,12 +80,15 @@ For local setup, put these values in `backend/.env` (not `.env.example`); the
 seed command loads that file automatically. After applying migrations, run
 `.\.venv\Scripts\python.exe seed_admin.py` from `backend`. Bootstrap values
 should be removed from the deployment environment or local `.env` after use.
-For safety, the bootstrap command only writes to the dedicated
-`apexive_community_app` or `apexive_admin_eisn` database. It creates an
-ordinary administrator, never a Super Admin, and updates an existing ordinary
-bootstrap account in place rather than deleting an account that may have
-related records. Sign in with the configured email (case-insensitive) or
-username.
+For safety, the bootstrap command only writes to the known application
+databases `apexive_community`, `apexive_community_app`, or
+`apexive_admin_eisn`. It creates an ordinary administrator, never a Super
+Admin, and updates an existing ordinary bootstrap account in place rather
+than deleting an account that may have related records. On Render, run the
+command from a one-off job or service shell connected to the production
+database after setting the four bootstrap variables in the Render environment.
+Remove all four bootstrap variables after the command succeeds. Sign in with
+the configured email (case-insensitive) or username.
 For the first Super Admin, have an authorized database operator promote an
 existing, active administrator in a reviewed transaction and record the
 approval reference in `system_audit_events`; do not promote a named account by

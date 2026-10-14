@@ -10,6 +10,7 @@ from app.auth import hash_password
 from app.models import User
 
 BOOTSTRAP_DATABASE_NAMES = {
+    "apexive_community",
     "apexive_community_app",
     "apexive_admin_eisn",
 }

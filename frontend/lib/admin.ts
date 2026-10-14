@@ -59,6 +59,14 @@ export type AdminSubscription = {
   current_period_end: string | null;
 };
 
+export type AdminSubscriptionClient = {
+  id: number;
+  tenant_id: number;
+  username: string;
+  email: string;
+  display_name: string;
+};
+
 export type AdminAuditLog = {
   id: number;
   tenant_id: number;
@@ -143,6 +151,24 @@ export async function getAdminDashboard() {
     subscriptions: subscriptions.items,
     auditLogs,
   };
+}
+
+export function getAdminSubscriptions() {
+  return adminRequest<{ items: AdminSubscription[] }>(
+    "/api/admin/subscriptions?limit=500",
+  );
+}
+
+export function getAdminSubscriptionPayments() {
+  return adminRequest<{ items: AdminPayment[] }>(
+    "/api/admin/payments?limit=500",
+  );
+}
+
+export function getAdminSubscriptionClients() {
+  return adminRequest<{ items: AdminSubscriptionClient[] }>(
+    "/api/admin/subscription-clients",
+  );
 }
 
 export function getAdminAccounts() {

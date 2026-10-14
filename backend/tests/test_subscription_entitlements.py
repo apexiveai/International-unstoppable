@@ -68,6 +68,16 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             is_admin=False,
             is_super_admin=False,
         )
+        self.regular_admin = User(
+            username="ordinary-admin",
+            email="ordinary-admin@example.test",
+            password_hash="not-used",
+            display_name="Ordinary Admin",
+            tenant_id=self.tenant_a.id,
+            is_active=True,
+            is_admin=True,
+            is_super_admin=False,
+        )
         self.super_admin = User(
             username="root-admin",
             email="root-admin@example.test",
@@ -78,7 +88,7 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             is_admin=True,
             is_super_admin=True,
         )
-        self.db.add_all((self.user, self.super_admin))
+        self.db.add_all((self.user, self.regular_admin, self.super_admin))
         self.plan = SubscriptionPlan(
             product_key="trademark",
             name="Trademark",
@@ -313,6 +323,18 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.db.get(Subscription, subscription.id).status, "active")
 
+    def test_ordinary_admin_can_cancel_any_subscription(self):
+        subscription = self.add_subscription(tenant=self.tenant_b)
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        response = self.client.post(
+            f"/api/admin/subscriptions/{subscription.id}/cancel"
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "cancelled")
+
     def test_customer_can_submit_payment_request_for_admin_review(self):
         response = self.client.post(
             "/api/payments/create",
@@ -325,9 +347,25 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertIsNotNone(payment["subscription_id"])
         subscription = self.db.get(Subscription, payment["subscription_id"])
         self.assertEqual(subscription.status, "pending")
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
 
-    def test_super_admin_can_create_a_manual_subscription(self):
-        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+        verified = self.client.post(f"/api/admin/payments/{payment['id']}/verify")
+        activated = self.client.post(
+            f"/api/admin/subscriptions/{subscription.id}/activate",
+            json={"duration_days": 30},
+        )
+
+        self.assertEqual(verified.status_code, 200, verified.text)
+        self.assertEqual(activated.status_code, 200, activated.text)
+        self.db.expire_all()
+        self.assertTrue(
+            tenant_product_access(self.db, self.tenant_a.id, "trademark")[
+                "has_access"
+            ]
+        )
+
+    def test_ordinary_admin_can_create_a_manual_subscription(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
 
         response = self.client.post(
             "/api/admin/subscriptions",
@@ -353,7 +391,7 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         audit = self.db.query(TenantAuditLog).filter_by(
             action="subscription.admin_created"
         ).one()
-        self.assertEqual(audit.actor_user_id, self.super_admin.id)
+        self.assertEqual(audit.actor_user_id, self.regular_admin.id)
 
     def test_customer_cannot_create_a_manual_subscription(self):
         response = self.client.post(
@@ -368,13 +406,29 @@ class SubscriptionEntitlementTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_super_admin_can_renew_expired_subscription(self):
+    def test_ordinary_admin_cannot_override_payment_verification(self):
+        subscription = self.add_subscription(status="pending")
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        response = self.client.post(
+            f"/api/admin/subscriptions/{subscription.id}/activate",
+            json={
+                "override_verified_payment": True,
+                "override_reason": "No payment received",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.db.get(Subscription, subscription.id).status, "pending")
+
+    def test_ordinary_admin_can_renew_expired_subscription(self):
         subscription = self.add_subscription(
             status="expired", end_delta=timedelta(days=-10)
         )
         previous_end = subscription.current_period_end
         self.db.commit()
-        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
         expected_end = max(
             datetime.now(timezone.utc).replace(tzinfo=None),
             previous_end.replace(tzinfo=None),
@@ -405,7 +459,15 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         audit = self.db.query(TenantAuditLog).filter_by(
             action="subscription.renewed"
         ).one()
-        self.assertEqual(audit.actor_user_id, self.super_admin.id)
+        self.assertEqual(audit.actor_user_id, self.regular_admin.id)
+
+    def test_ordinary_admin_can_list_subscription_clients(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        response = self.client.get("/api/admin/subscription-clients")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["items"][0]["id"], self.user.id)
 
     def test_super_administrator_can_use_platform_admin_routes(self):
         api.dependency_overrides[get_current_user] = lambda: self.super_admin

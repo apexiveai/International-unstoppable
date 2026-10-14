@@ -74,7 +74,7 @@ class SeedAdminTests(unittest.TestCase):
         self.assertFalse(admin.is_super_admin)
 
     def test_refuses_to_create_an_admin_in_another_database(self):
-        self.database_name = "apexive_community"
+        self.database_name = "another_database"
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
             env_file.write_text(
@@ -102,6 +102,59 @@ class SeedAdminTests(unittest.TestCase):
             self.assertIsNone(
                 db.scalar(select(User).where(User.username == "bootstrap-admin"))
             )
+
+    def test_allows_render_database_and_resets_existing_admin_password(self):
+        self.database_name = "apexive_community"
+        existing_admin = User(
+            username="bootstrap-admin",
+            email="admin@example.test",
+            password_hash="old-password-hash",
+            display_name="Old Admin",
+            is_active=True,
+            is_admin=True,
+            is_super_admin=False,
+            role="ADMIN",
+            account_status="ACTIVE",
+        )
+        with Session(self.engine) as db:
+            db.add(existing_admin)
+            db.commit()
+
+        env_values = (
+            "BOOTSTRAP_ADMIN_USERNAME=bootstrap-admin\n"
+            "BOOTSTRAP_ADMIN_EMAIL=admin@example.test\n"
+            "BOOTSTRAP_ADMIN_DISPLAY_NAME=Bootstrap Admin\n"
+            "BOOTSTRAP_ADMIN_PASSWORD=a-test-password-at-least-16\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            env_file.write_text(env_values, encoding="utf-8")
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch(
+                    "seed_admin.load_dotenv",
+                    side_effect=lambda _path: load_dotenv(env_file),
+                ),
+                patch("seed_admin.SessionLocal", self.session_factory),
+                patch(
+                    "seed_admin.hash_password", return_value="new-password-hash"
+                ) as hash_password,
+            ):
+                seed_admin.seed_admin()
+                hash_password.assert_called_once_with(
+                    "a-test-password-at-least-16"
+                )
+
+        with Session(self.engine) as db:
+            admin = db.scalar(
+                select(User).where(User.username == "bootstrap-admin")
+            )
+
+        self.assertIsNotNone(admin)
+        self.assertEqual(admin.password_hash, "new-password-hash")
+        self.assertEqual(admin.display_name, "Bootstrap Admin")
+        self.assertTrue(admin.is_active)
+        self.assertTrue(admin.is_admin)
 
 
 if __name__ == "__main__":

@@ -65,7 +65,8 @@ function getAdminRoleSnapshot() {
     const user = rawUser
       ? (JSON.parse(rawUser) as { is_admin?: boolean; is_super_admin?: boolean })
       : null;
-    return user?.is_admin && user.is_super_admin ? "super_admin" : "user";
+    if (user?.is_admin && user.is_super_admin) return "super_admin";
+    return user?.is_admin ? "admin" : "user";
   } catch {
     return "user";
   }
@@ -155,7 +156,7 @@ function AdminDashboard() {
       };
     }
     if (!isSuperAdmin) {
-      router.replace("/");
+      router.replace(role === "admin" ? "/admin/subscriptions" : "/");
       return () => {
         mounted = false;
       };
