@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "CHANGE_THIS_IN_PRODUCTION"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
+    product_launch_code_ttl_seconds: int = Field(default=180, ge=30, le=900)
 
     didit_api_key: str = ""
     didit_workflow_id: str = ""

@@ -6,7 +6,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import generate_temporary_password, hash_password
-from app.core.authorization import require_admin as require_authenticated_admin
+from app.core.authorization import require_super_admin as require_authenticated_admin
 from app.database import get_db
 from app.models import (
     AuditLog,
@@ -18,6 +18,7 @@ from app.models import (
     Workflow,
 )
 from app.schemas.execution import ExecutionResponse
+from app.services.audit_service import write_system_audit_event
 
 router = APIRouter(prefix="/api/admin", tags=["Administration"])
 
@@ -80,6 +81,7 @@ def _serialize_admin(account: User) -> dict:
         "email": account.email,
         "is_active": account.is_active,
         "is_admin": account.is_admin,
+        "is_super_admin": account.is_super_admin,
         "created_at": account.created_at,
     }
 
@@ -136,6 +138,16 @@ def create_admin_account(
         is_admin=True,
     )
     db.add(account)
+    db.flush()
+    write_system_audit_event(
+        db,
+        actor_user_id=admin.id,
+        action="admin_account.created",
+        target_type="user",
+        target_id=account.id,
+        tenant_id=account.tenant_id,
+        details={"username": account.username, "is_super_admin": False},
+    )
     db.commit()
     db.refresh(account)
     return {
@@ -172,6 +184,15 @@ def change_admin_status(
                 detail="The last active administrator cannot be disabled.",
             )
     account.is_active = payload.is_active
+    write_system_audit_event(
+        db,
+        actor_user_id=admin.id,
+        action="admin_account.status_changed",
+        target_type="user",
+        target_id=account.id,
+        tenant_id=account.tenant_id,
+        details={"is_active": account.is_active},
+    )
     db.commit()
     db.refresh(account)
     return _serialize_admin(account)
@@ -208,6 +229,14 @@ def update_admin_plan_settings(
     plan = db.get(SubscriptionPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="Subscription plan not found.")
+    previous = {
+        "name": plan.name,
+        "description": plan.description,
+        "monthly_price": str(plan.monthly_price),
+        "currency": plan.currency,
+        "billing_cycle": plan.billing_cycle,
+        "is_active": plan.is_active,
+    }
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         if field == "currency":
@@ -217,6 +246,25 @@ def update_admin_plan_settings(
         elif isinstance(value, str):
             value = value.strip()
         setattr(plan, field, value)
+    write_system_audit_event(
+        db,
+        actor_user_id=_admin.id,
+        action="subscription_plan.updated",
+        target_type="subscription_plan",
+        target_id=plan.id,
+        details={
+            "product_key": plan.product_key,
+            "previous": previous,
+            "current": {
+                "name": plan.name,
+                "description": plan.description,
+                "monthly_price": str(plan.monthly_price),
+                "currency": plan.currency,
+                "billing_cycle": plan.billing_cycle,
+                "is_active": plan.is_active,
+            },
+        },
+    )
     db.commit()
     db.refresh(plan)
     return {

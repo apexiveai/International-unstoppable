@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -9,11 +9,14 @@ import { getClientProducts, type ClientProduct } from "@/lib/client";
 import {
   createAdminAccount,
   createAdminClient,
+  createAdminProductGrant,
   getAdminAccounts,
   getAdminDashboard,
   getAdminPlanSettings,
+  getAdminProductGrants,
   refundAdminPayment,
   rejectAdminPayment,
+  revokeAdminProductGrant,
   resetAdminClientPassword,
   setAdminAccountStatus,
   setAdminClientStatus,
@@ -26,6 +29,7 @@ import {
   type AdminClient,
   type AdminPayment,
   type AdminPlan,
+  type AdminProductGrant,
   type AdminSubscription,
 } from "@/lib/admin";
 
@@ -52,6 +56,25 @@ const subscriptionStatuses = [
   "cancelled",
 ] as const;
 
+function getAdminRoleSnapshot() {
+  if (typeof window === "undefined") return "unknown";
+  try {
+    const rawUser = window.localStorage.getItem("apexive_user");
+    const user = rawUser
+      ? (JSON.parse(rawUser) as { is_admin?: boolean; is_super_admin?: boolean })
+      : null;
+    return user?.is_admin && user.is_super_admin ? "super_admin" : "user";
+  } catch {
+    return "user";
+  }
+}
+
+function subscribeAdminRole(listener: () => void) {
+  const onStorage = () => listener();
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}
+
 function scrollToSection(sectionId: string) {
   document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
 }
@@ -74,10 +97,19 @@ function StatusBadge({ status }: { status: string }) {
 
 function AdminDashboard() {
   const router = useRouter();
+  const role = useSyncExternalStore(
+    subscribeAdminRole,
+    getAdminRoleSnapshot,
+    () => "unknown",
+  );
+  const isSuperAdmin = role === "super_admin";
   const [data, setData] = useState(emptyDashboard);
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [products, setProducts] = useState<ClientProduct[]>([]);
   const [plans, setPlans] = useState<AdminPlan[]>([]);
+  const [productGrants, setProductGrants] = useState<AdminProductGrant[]>([]);
+  const [grantType, setGrantType] = useState<"trial" | "complimentary">("trial");
+  const [permanentGrant, setPermanentGrant] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -88,39 +120,39 @@ function AdminDashboard() {
   const [paymentFilter, setPaymentFilter] = useState<string>("pending");
   const [subscriptionFilter, setSubscriptionFilter] = useState<string>("active");
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
+  const [grantsAsOf, setGrantsAsOf] = useState(0);
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const [dashboard, adminAccounts, catalog, planSettings] = await Promise.all([
+      const [dashboard, adminAccounts, catalog, planSettings, grants] = await Promise.all([
         getAdminDashboard(),
         getAdminAccounts(),
         getClientProducts(),
         getAdminPlanSettings(),
+        isSuperAdmin ? getAdminProductGrants() : Promise.resolve({ items: [] }),
       ]);
       setData(dashboard);
       setAccounts(adminAccounts);
       setProducts(catalog);
       setPlans(planSettings);
+      setProductGrants(grants.items);
+      setGrantsAsOf(Date.now());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load admin data.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     let mounted = true;
-    let isAdmin = false;
-    try {
-      const rawUser = localStorage.getItem("apexive_user");
-      const user = rawUser ? (JSON.parse(rawUser) as { is_admin?: boolean }) : null;
-      isAdmin = Boolean(user?.is_admin);
-    } catch {
-      isAdmin = false;
+    if (role === "unknown") {
+      return () => {
+        mounted = false;
+      };
     }
-
-    if (!isAdmin) {
+    if (!isSuperAdmin) {
       router.replace("/");
       return () => {
         mounted = false;
@@ -132,13 +164,16 @@ function AdminDashboard() {
       getAdminAccounts(),
       getClientProducts(),
       getAdminPlanSettings(),
+      getAdminProductGrants(),
     ])
-      .then(([dashboard, adminAccounts, catalog, planSettings]) => {
+      .then(([dashboard, adminAccounts, catalog, planSettings, grants]) => {
         if (!mounted) return;
         setData(dashboard);
         setAccounts(adminAccounts);
         setProducts(catalog);
         setPlans(planSettings);
+        setProductGrants(grants.items);
+        setGrantsAsOf(Date.now());
       })
       .catch((reason: unknown) => {
         if (mounted) {
@@ -151,7 +186,7 @@ function AdminDashboard() {
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [isSuperAdmin, role, router]);
 
   async function runAction(action: () => Promise<unknown>, successMessage: string) {
     setBusy(true);
@@ -217,6 +252,40 @@ function AdminDashboard() {
       setError(reason instanceof Error ? reason.message : "Unable to create administrator.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitProductGrant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const isPermanent = permanentGrant;
+    const startsAt = String(form.get("starts_at") ?? "");
+    const expiresAt = String(form.get("expires_at") ?? "");
+    const accessType = String(form.get("access_type") ?? "");
+    if (accessType !== "trial" && accessType !== "complimentary") {
+      setError("Choose a valid enterprise access type.");
+      return;
+    }
+    try {
+      await runAction(
+        () =>
+          createAdminProductGrant({
+            tenant_id: Number(form.get("tenant_id")),
+            product_key: String(form.get("product_key") ?? ""),
+            access_type: accessType,
+            starts_at: new Date(startsAt).toISOString(),
+            expires_at: isPermanent ? null : new Date(expiresAt).toISOString(),
+            is_permanent: isPermanent,
+            reason: String(form.get("reason") ?? "").trim(),
+          }),
+        "Enterprise product access granted.",
+      );
+      formElement.reset();
+      setGrantType("trial");
+      setPermanentGrant(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to grant product access.");
     }
   }
 
@@ -295,6 +364,20 @@ function AdminDashboard() {
     }
   }
 
+  async function overrideSubscriptionActivation(subscription: AdminSubscription) {
+    const reason = window.prompt(
+      "Enter the business reason for activating without verified payment:",
+    );
+    if (!reason?.trim()) return;
+    await runAction(
+      () =>
+        updateAdminSubscription(subscription.id, "activate", {
+          reason: reason.trim(),
+        }),
+      `Subscription #${subscription.id} activated with a Super Admin override.`,
+    );
+  }
+
   const pendingPaymentCount = data.payments.filter((payment) =>
     ["pending", "processing"].includes(payment.status),
   ).length;
@@ -330,6 +413,11 @@ function AdminDashboard() {
                 <button onClick={() => selectedClient ? scrollToSection("client-details") : scrollToSection("clients")} className="rounded-lg px-3 py-2 text-left text-slate-300 hover:bg-slate-800/70">Client Details</button>
               </div>
             </div>
+            {isSuperAdmin && (
+              <a href="#enterprise-access" className="mt-3 rounded-lg px-3 py-2.5 text-cyan-300 hover:bg-slate-800/70">
+                Enterprise access
+              </a>
+            )}
             <div className="pt-3">
               <a href="#admins" className="px-3 text-xs font-bold uppercase tracking-widest text-slate-500">Admins</a>
               <div className="mt-1 grid gap-1">
@@ -470,6 +558,85 @@ function AdminDashboard() {
                   </section>
                 )}
 
+                {isSuperAdmin && (
+                  <section id="enterprise-access" className="scroll-mt-6 rounded-2xl border border-cyan-400/30 bg-[#0d1726] p-6">
+                    <div>
+                      <h2 className="text-lg font-bold text-white">Enterprise product permissions</h2>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Grant a tenant a dated trial or complimentary access. Permanent access is available only as an explicit complimentary grant. Grants take effect automatically at their start time, expire automatically, and can be revoked at any time.
+                      </p>
+                    </div>
+                    <form onSubmit={submitProductGrant} className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <select aria-label="Tenant" name="tenant_id" required defaultValue="" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white">
+                        <option value="" disabled>Select tenant</option>
+                        {data.clients.filter((client) => client.tenant_id !== null).map((client) => (
+                          <option key={client.id} value={client.tenant_id!}>
+                            {client.company_name ?? client.display_name} · {client.email}
+                          </option>
+                        ))}
+                      </select>
+                      <select aria-label="Product" name="product_key" required defaultValue="trademark" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white">
+                        <option value="trademark">Trademark Conflict</option>
+                        <option value="workforce">Autonomous Workforce Agent</option>
+                      </select>
+                      <select aria-label="Grant type" name="access_type" value={grantType} onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === "trial" || value === "complimentary") {
+                          setGrantType(value);
+                          if (value === "trial") setPermanentGrant(false);
+                        }
+                      }} className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white">
+                        <option value="trial">Free trial</option>
+                        <option value="complimentary">Complimentary access</option>
+                      </select>
+                      <label className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2.5 text-sm text-slate-200">
+                        <input type="checkbox" name="is_permanent" checked={permanentGrant} disabled={grantType !== "complimentary"} onChange={(event) => setPermanentGrant(event.target.checked)} />
+                        Permanent access
+                      </label>
+                      <label className="grid gap-1 text-xs text-slate-400">
+                        Starts at
+                        <input aria-label="Grant start date and time" type="datetime-local" name="starts_at" required className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white" />
+                      </label>
+                      {!permanentGrant && (
+                        <label className="grid gap-1 text-xs text-slate-400">
+                          Expires at
+                          <input aria-label="Grant expiration date and time" type="datetime-local" name="expires_at" required className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white" />
+                        </label>
+                      )}
+                      <input aria-label="Grant reason" name="reason" required minLength={3} maxLength={2000} placeholder="Business reason / approval reference" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500 sm:col-span-2" />
+                      <button disabled={busy || !data.clients.some((client) => client.tenant_id !== null)} className="rounded-lg bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-50">
+                        Grant enterprise access
+                      </button>
+                    </form>
+
+                    <div className="mt-6 overflow-x-auto">
+                      <table className="w-full min-w-[900px] text-left text-sm">
+                        <thead className="text-xs uppercase text-slate-500">
+                          <tr><th className="py-2">Tenant</th><th>Product / type</th><th>Period</th><th>Granted by</th><th>Status / action</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800">
+                          {productGrants.map((grant) => {
+                            const expired = !grant.is_permanent && grant.expires_at !== null && new Date(grant.expires_at).getTime() <= grantsAsOf;
+                            const scheduled = new Date(grant.starts_at).getTime() > grantsAsOf;
+                            const grantStatus = grant.revoked_at ? "revoked" : expired ? "expired" : scheduled ? "scheduled" : "active";
+                            const client = data.clients.find((item) => item.tenant_id === grant.tenant_id);
+                            return (
+                              <tr key={grant.id}>
+                                <td className="py-3 text-slate-100">Tenant {grant.tenant_id}<p className="text-xs text-slate-500">{client?.company_name ?? client?.email ?? "Tenant"}</p></td>
+                                <td className="text-slate-300">{grant.product_key}<p className="text-xs capitalize text-slate-500">{grant.access_type}{grant.is_permanent ? " · permanent" : ""}</p></td>
+                                <td className="text-slate-300">{new Date(grant.starts_at).toLocaleString()}<p className="text-xs text-slate-500">{grant.is_permanent ? "No expiration" : grant.expires_at ? new Date(grant.expires_at).toLocaleString() : "—"}</p></td>
+                                <td className="text-slate-400">User #{grant.granted_by_id}{grant.revoked_by_id ? <p className="text-xs text-rose-300">Revoked by #{grant.revoked_by_id}</p> : null}</td>
+                                <td><div className="flex items-center gap-3"><StatusBadge status={grantStatus} />{!grant.revoked_at && !expired && <button disabled={busy} onClick={() => void runAction(() => revokeAdminProductGrant(grant.id), `Enterprise grant #${grant.id} revoked.`)} className="font-semibold text-rose-300 disabled:opacity-50">Revoke</button>}</div><p className="mt-1 max-w-xs truncate text-xs text-slate-500" title={grant.reason}>{grant.reason}</p></td>
+                              </tr>
+                            );
+                          })}
+                          {!productGrants.length && <tr><td colSpan={5} className="py-5 text-slate-400">No enterprise access grants yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
+
                 <section id="admins" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div><h2 className="text-lg font-bold text-white">Admin List</h2><p className="mt-1 text-sm text-slate-400">Review administrator accounts and enable or disable access.</p></div>
@@ -547,7 +714,12 @@ function AdminDashboard() {
                               ) : (
                                 <button disabled={busy} onClick={() => setEditingSubscriptionId(subscription.id)} className="font-semibold text-cyan-300 disabled:opacity-50">Edit amount</button>
                               )}
-                              {["pending", "suspended", "expired"].includes(subscription.status) && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "activate"), `Subscription #${subscription.id} activated.`)} className="font-semibold text-emerald-300 disabled:opacity-50">Activate</button>}
+                              {["pending", "suspended", "expired"].includes(subscription.status) && (
+                                <>
+                                  <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "activate"), `Subscription #${subscription.id} activated.`)} className="font-semibold text-emerald-300 disabled:opacity-50">Activate</button>
+                                  {isSuperAdmin && <button disabled={busy} onClick={() => void overrideSubscriptionActivation(subscription)} className="font-semibold text-amber-300 disabled:opacity-50">Override payment</button>}
+                                </>
+                              )}
                               {subscription.status === "active" && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "suspend"), `Subscription #${subscription.id} suspended.`)} className="font-semibold text-amber-300 disabled:opacity-50">Suspend</button>}
                               {["pending", "active", "suspended"].includes(subscription.status) && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "cancel"), `Subscription #${subscription.id} cancelled.`)} className="font-semibold text-rose-300 disabled:opacity-50">Cancel</button>}
                               </div>

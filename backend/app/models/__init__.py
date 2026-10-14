@@ -31,6 +31,8 @@ from app.models.subscription import (
     BillingEvent,
 )
 from app.models.payment import Payment
+from app.models.product_grant import ProductAccessGrant, ProductLaunchCode
+from app.models.security_audit_event import SystemAuditEvent
 
 __all__ = [
     "User",
@@ -55,6 +57,9 @@ __all__ = [
     "BillingEvent",
 
     "Payment",
+    "ProductAccessGrant",
+    "ProductLaunchCode",
+    "SystemAuditEvent",
 
     "ProjectTechnology",
     "ProjectLike",

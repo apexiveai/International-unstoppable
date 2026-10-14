@@ -1,91 +1,56 @@
-from datetime import datetime
+import os
+
+from sqlalchemy import select
 
 from app.database import SessionLocal
-
+from app.auth import hash_password
 from app.models import User
 
-from app.auth import hash_password
 
-def seed_admin():
+def seed_admin() -> None:
+    username = os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+    display_name = os.environ.get("BOOTSTRAP_ADMIN_DISPLAY_NAME", "").strip()
+    password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not all((username, email, display_name, password)):
+        raise RuntimeError(
+            "Set BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_EMAIL, "
+            "BOOTSTRAP_ADMIN_DISPLAY_NAME, and BOOTSTRAP_ADMIN_PASSWORD "
+            "through a secure secret mechanism."
+        )
+    if len(password) < 16:
+        raise RuntimeError("The bootstrap administrator password must be at least 16 characters.")
 
     db = SessionLocal()
-
     try:
-
-        existing = db.query(User).filter(User.username == "apexive").first()
-
-        if existing:
-
-            existing.is_admin = True
-
-            existing.is_active = True
-
-            if hasattr(existing, "email_verified_at") and existing.email_verified_at is None:
-
-                existing.email_verified_at = datetime.utcnow()
-
-            db.commit()
-
-            print("Admin user already exists.")
-
-            print(f"Username: {existing.username}")
-
-            print(f"Email: {existing.email}")
-
-            print("Admin: True")
-
+        existing = db.scalar(
+            select(User).where((User.username == username) | (User.email == email))
+        )
+        if existing is not None:
+            if existing.username != username or existing.email.lower() != email:
+                raise RuntimeError("The configured username or email is already in use.")
+            if not existing.is_admin or not existing.is_active:
+                raise RuntimeError(
+                    "The existing account is not an active administrator; no account changes were made."
+                )
+            print("The configured active administrator already exists; no changes were made.")
             return
 
         admin = User(
-
-            username="apexive",
-
-            email="admin@apexive.ai",
-
-            password_hash=hash_password("ChangeThisPassword123!"),
-
-            display_name="Apexive",
-
-            bio="Apexive Community administrator.",
-
+            username=username,
+            email=email,
+            password_hash=hash_password(password),
+            display_name=display_name,
             is_active=True,
-
             is_admin=True,
-
-            email_verified_at=datetime.utcnow(),
-
+            is_super_admin=False,
         )
-
         db.add(admin)
-
         db.commit()
-
-        db.refresh(admin)
-
-        print("========================================")
-
-        print("Apexive Community admin created")
-
-        print("========================================")
-
-        print(f"ID:       {admin.id}")
-
-        print(f"Username: {admin.username}")
-
-        print(f"Email:    {admin.email}")
-
-        print("Password: ChangeThisPassword123!")
-
-        print("Admin:    True")
-
-        print("Verified: True")
-
-        print("========================================")
-
+        print("Initial administrator created. No Super Admin role was assigned.")
     finally:
-
         db.close()
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     seed_admin()

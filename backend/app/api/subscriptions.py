@@ -1,24 +1,40 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from app.auth import get_current_user
-from app.core.authorization import require_admin
+from app.auth import create_access_token, get_current_user
+from app.core.authorization import require_super_admin as require_admin
+from app.core.authorization import require_super_admin
+from app.core.config import settings
 from app.database import get_db
-from app.models import Payment, Subscription, SubscriptionPlan, TenantAuditLog, User
-from app.services.audit_service import write_audit_log
+from app.models import (
+    Payment,
+    ProductAccessGrant,
+    ProductLaunchCode,
+    Subscription,
+    SubscriptionPlan,
+    SystemAuditEvent,
+    Tenant,
+    TenantAuditLog,
+    User,
+)
+from app.services.audit_service import write_audit_log, write_system_audit_event
 from app.services.product_access import (
     PUBLISHED_PRODUCT_KEYS,
-    can_access_product,
     build_product_response,
     product_is_published,
     require_product_key,
+    tenant_product_access,
 )
 
 router = APIRouter(prefix="/api", tags=["Subscriptions"])
@@ -149,41 +165,404 @@ def get_product_access(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    product = require_product_key(product_key)
-    subscriptions_for_product = (
-        select(Subscription)
-        .join(SubscriptionPlan)
-        .options(joinedload(Subscription.plan))
-        .where(
-            Subscription.tenant_id == _tenant_id(user),
-            SubscriptionPlan.product_key == product_key,
-        )
-    )
-    subscription = db.scalar(
-        subscriptions_for_product.where(Subscription.status == "active")
-        .order_by(desc(Subscription.created_at))
-    )
-    latest_subscription = subscription or db.scalar(
-        subscriptions_for_product.order_by(desc(Subscription.created_at))
-    )
-    has_access = bool(
-        subscription
-        and can_access_product(subscription, product_key)
-        and db.scalar(
-            select(Payment.id).where(
-                Payment.subscription_id == subscription.id,
-                Payment.status == "verified",
-            )
-        )
-    )
+    require_product_key(product_key)
+    tenant_id = _tenant_id(user)
+    access = _tenant_product_access(db, tenant_id, product_key)
     return {
         **build_product_response(product_key),
-        "has_access": has_access,
-        "subscription_id": latest_subscription.id if latest_subscription else None,
-        "status": latest_subscription.status if latest_subscription else None,
-        "current_period_end": (
-            latest_subscription.current_period_end if latest_subscription else None
+        "tenant_id": tenant_id,
+        **access,
+    }
+
+
+def _tenant_product_access(
+    db: Session,
+    tenant_id: int,
+    product_key: str,
+) -> dict:
+    return tenant_product_access(db, tenant_id, product_key)
+
+
+class EnterpriseGrantCreateRequest(BaseModel):
+    tenant_id: int = Field(gt=0)
+    product_key: str
+    access_type: Literal["trial", "complimentary"]
+    starts_at: datetime
+    expires_at: datetime | None
+    is_permanent: bool = False
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_access_period(self):
+        if self.starts_at.tzinfo is None or self.starts_at.utcoffset() is None:
+            raise ValueError("starts_at must include a timezone.")
+        if self.expires_at is not None:
+            if self.expires_at.tzinfo is None or self.expires_at.utcoffset() is None:
+                raise ValueError("expires_at must include a timezone.")
+            if self.expires_at <= self.starts_at:
+                raise ValueError("expires_at must be after starts_at.")
+        if self.is_permanent:
+            if self.access_type != "complimentary":
+                raise ValueError("Permanent access is available only for complimentary grants.")
+            if self.expires_at is not None:
+                raise ValueError("Permanent grants cannot have an expiration date.")
+        elif self.expires_at is None:
+            raise ValueError("An expiration date is required for non-permanent grants.")
+        return self
+
+
+class ProductLaunchCodeExchangeRequest(BaseModel):
+    code: str = Field(min_length=32, max_length=128)
+
+
+def _serialize_product_grant(grant: ProductAccessGrant) -> dict:
+    return {
+        "id": grant.id,
+        "tenant_id": grant.tenant_id,
+        "product_key": grant.product_key,
+        "access_type": grant.access_type,
+        "starts_at": grant.starts_at,
+        "expires_at": grant.expires_at,
+        "is_permanent": grant.is_permanent,
+        "reason": grant.reason,
+        "granted_by_id": grant.granted_by_id,
+        "created_at": grant.created_at,
+        "revoked_at": grant.revoked_at,
+        "revoked_by_id": grant.revoked_by_id,
+    }
+
+
+@router.get("/admin/product-grants")
+def list_product_grants(
+    tenant_id: int | None = None,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_super_admin),
+):
+    query = select(ProductAccessGrant)
+    if tenant_id is not None:
+        query = query.where(ProductAccessGrant.tenant_id == tenant_id)
+    grants = db.scalars(
+        query.order_by(desc(ProductAccessGrant.created_at)).limit(500)
+    ).all()
+    return {"items": [_serialize_product_grant(grant) for grant in grants]}
+
+
+@router.post("/admin/product-grants", status_code=status.HTTP_201_CREATED)
+def create_product_grant(
+    payload: EnterpriseGrantCreateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_super_admin),
+):
+    require_product_key(payload.product_key)
+    if not product_is_published(payload.product_key):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This product is not published for access grants.",
+        )
+    if db.get(Tenant, payload.tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    grant = ProductAccessGrant(
+        tenant_id=payload.tenant_id,
+        product_key=payload.product_key,
+        access_type=payload.access_type,
+        starts_at=payload.starts_at.astimezone(timezone.utc),
+        expires_at=(
+            payload.expires_at.astimezone(timezone.utc)
+            if payload.expires_at
+            else None
         ),
+        is_permanent=payload.is_permanent,
+        reason=payload.reason.strip(),
+        granted_by_id=admin.id,
+    )
+    db.add(grant)
+    db.flush()
+    write_audit_log(
+        db,
+        tenant_id=grant.tenant_id,
+        actor_user_id=admin.id,
+        action="product_access.granted",
+        target_type="product_access_grant",
+        target_id=grant.id,
+        new_value=_serialize_product_grant(grant),
+    )
+    db.commit()
+    db.refresh(grant)
+    return _serialize_product_grant(grant)
+
+
+@router.post("/admin/product-grants/{grant_id}/revoke")
+def revoke_product_grant(
+    grant_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_super_admin),
+):
+    grant = db.get(ProductAccessGrant, grant_id, with_for_update=True)
+    if grant is None:
+        raise HTTPException(status_code=404, detail="Product access grant not found.")
+    if grant.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Product access grant has already been revoked.",
+        )
+    old_value = _serialize_product_grant(grant)
+    grant.revoked_at = datetime.now(timezone.utc)
+    grant.revoked_by_id = admin.id
+    write_audit_log(
+        db,
+        tenant_id=grant.tenant_id,
+        actor_user_id=admin.id,
+        action="product_access.revoked",
+        target_type="product_access_grant",
+        target_id=grant.id,
+        old_value=old_value,
+        new_value=_serialize_product_grant(grant),
+    )
+    db.commit()
+    db.refresh(grant)
+    return _serialize_product_grant(grant)
+
+
+@router.post("/subscriptions/products/{product_key}/launch")
+def create_product_launch_code(
+    product_key: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_product_key(product_key)
+    tenant_id = _tenant_id(user)
+    access = _tenant_product_access(db, tenant_id, product_key)
+    if not access["has_access"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active product access is required.",
+        )
+    now = datetime.now(timezone.utc)
+    db.execute(
+        update(ProductLaunchCode)
+        .where(
+            ProductLaunchCode.user_id == user.id,
+            ProductLaunchCode.product_key == product_key,
+            ProductLaunchCode.consumed_at.is_(None),
+            ProductLaunchCode.revoked_at.is_(None),
+            ProductLaunchCode.expires_at > now,
+        )
+        .values(revoked_at=now, revoked_by_id=user.id)
+        .execution_options(synchronize_session=False)
+    )
+    raw_code = secrets.token_urlsafe(48)
+    launch_code = ProductLaunchCode(
+        code_hash=hashlib.sha256(raw_code.encode("utf-8")).hexdigest(),
+        user_id=user.id,
+        tenant_id=tenant_id,
+        product_key=product_key,
+        expires_at=now + timedelta(seconds=settings.product_launch_code_ttl_seconds),
+    )
+    db.add(launch_code)
+    db.flush()
+    write_audit_log(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=user.id,
+        action="product_launch_code.issued",
+        target_type="product_launch_code",
+        target_id=launch_code.code_hash[:16],
+        new_value={"product_key": product_key, "expires_at": launch_code.expires_at},
+    )
+    db.commit()
+    product_url = build_product_response(product_key)["url"]
+    parsed_url = urlsplit(product_url)
+    query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+    query["access_code"] = raw_code
+    return {
+        "url": urlunsplit(
+            (
+                parsed_url.scheme,
+                parsed_url.netloc,
+                parsed_url.path,
+                urlencode(query),
+                parsed_url.fragment,
+            )
+        ),
+        "expires_at": launch_code.expires_at,
+    }
+
+
+@router.post("/subscriptions/launch/exchange")
+def exchange_product_launch_code(
+    payload: ProductLaunchCodeExchangeRequest,
+    db: Session = Depends(get_db),
+):
+    code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
+    launch_code = db.scalar(
+        select(ProductLaunchCode)
+        .where(ProductLaunchCode.code_hash == code_hash)
+    )
+    now = datetime.now(timezone.utc)
+    expires_at = launch_code.expires_at if launch_code is not None else None
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if (
+        launch_code is None
+        or launch_code.consumed_at is not None
+        or launch_code.revoked_at is not None
+        or expires_at <= now
+    ):
+        write_system_audit_event(
+            db,
+            actor_user_id=launch_code.user_id if launch_code else None,
+            tenant_id=launch_code.tenant_id if launch_code else None,
+            action="product_launch_code.redemption_rejected",
+            target_type="product_launch_code",
+            target_id=code_hash[:16],
+            outcome="rejected",
+            details={"reason": "invalid_expired_consumed_or_revoked"},
+        )
+        if launch_code is not None:
+            write_audit_log(
+                db,
+                tenant_id=launch_code.tenant_id,
+                actor_user_id=launch_code.user_id,
+                action="product_launch_code.redemption_rejected",
+                target_type="product_launch_code",
+                target_id=launch_code.code_hash[:16],
+                new_value={"reason": "inactive_or_expired"},
+            )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Product launch link is invalid or expired. Open the product from your dashboard again.",
+        )
+    user = db.get(User, launch_code.user_id)
+    if (
+        user is None
+        or not user.is_active
+        or user.tenant_id != launch_code.tenant_id
+        or not _tenant_product_access(
+            db,
+            launch_code.tenant_id,
+            launch_code.product_key,
+        )["has_access"]
+    ):
+        write_system_audit_event(
+            db,
+            actor_user_id=launch_code.user_id,
+            tenant_id=launch_code.tenant_id,
+            action="product_launch_code.redemption_rejected",
+            target_type="product_launch_code",
+            target_id=launch_code.code_hash[:16],
+            outcome="rejected",
+            details={"reason": "account_or_entitlement_not_authorized"},
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is no longer authorized for the product.",
+        )
+    consumed = db.execute(
+        update(ProductLaunchCode)
+        .where(
+            ProductLaunchCode.code_hash == code_hash,
+            ProductLaunchCode.consumed_at.is_(None),
+            ProductLaunchCode.revoked_at.is_(None),
+            ProductLaunchCode.expires_at > now,
+        )
+        .values(consumed_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if consumed.rowcount != 1:
+        write_system_audit_event(
+            db,
+            actor_user_id=launch_code.user_id,
+            tenant_id=launch_code.tenant_id,
+            action="product_launch_code.redemption_rejected",
+            target_type="product_launch_code",
+            target_id=launch_code.code_hash[:16],
+            outcome="rejected",
+            details={"reason": "concurrent_or_repeated_redemption"},
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Product launch link is invalid or expired. Open the product from your dashboard again.",
+        )
+    write_audit_log(
+        db,
+        tenant_id=launch_code.tenant_id,
+        actor_user_id=launch_code.user_id,
+        action="product_launch_code.redeemed",
+        target_type="product_launch_code",
+        target_id=launch_code.code_hash[:16],
+        new_value={"product_key": launch_code.product_key},
+    )
+    access_token = create_access_token(user.id)
+    db.commit()
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "tenant_id": launch_code.tenant_id,
+        "product_key": launch_code.product_key,
+    }
+
+
+@router.post("/admin/product-launch-codes/{code_hash}/revoke")
+def revoke_product_launch_code(
+    code_hash: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_super_admin),
+):
+    if len(code_hash) != 64 or any(char not in "0123456789abcdef" for char in code_hash):
+        raise HTTPException(status_code=404, detail="Launch code not found.")
+    launch_code = db.get(ProductLaunchCode, code_hash, with_for_update=True)
+    if launch_code is None:
+        raise HTTPException(status_code=404, detail="Launch code not found.")
+    if launch_code.consumed_at is not None or launch_code.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Launch code has already been consumed or revoked.",
+        )
+    now = datetime.now(timezone.utc)
+    launch_code.revoked_at = now
+    launch_code.revoked_by_id = admin.id
+    write_audit_log(
+        db,
+        tenant_id=launch_code.tenant_id,
+        actor_user_id=admin.id,
+        action="product_launch_code.revoked",
+        target_type="product_launch_code",
+        target_id=launch_code.code_hash[:16],
+        new_value={"product_key": launch_code.product_key},
+    )
+    db.commit()
+    return {"revoked": True}
+
+
+@router.get("/admin/product-launch-codes")
+def list_product_launch_codes(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_super_admin),
+):
+    codes = db.scalars(
+        select(ProductLaunchCode)
+        .order_by(desc(ProductLaunchCode.created_at))
+        .limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "code_hash": code.code_hash,
+                "user_id": code.user_id,
+                "tenant_id": code.tenant_id,
+                "product_key": code.product_key,
+                "expires_at": code.expires_at,
+                "consumed_at": code.consumed_at,
+                "revoked_at": code.revoked_at,
+                "created_at": code.created_at,
+            }
+            for code in codes
+        ]
     }
 
 
@@ -223,6 +602,14 @@ def admin_get_subscription(
 class ActivateSubscriptionRequest(BaseModel):
     payment_id: int | None = Field(default=None, gt=0)
     duration_days: int = Field(default=30, ge=1, le=3660)
+    override_verified_payment: bool = False
+    override_reason: str | None = Field(default=None, min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_override_reason(self):
+        if self.override_verified_payment and not self.override_reason:
+            raise ValueError("A reason is required when overriding payment verification.")
+        return self
 
 
 class AdminSubscriptionPriceRequest(BaseModel):
@@ -250,31 +637,38 @@ def activate_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="This subscription cannot be activated.",
         )
+    if payload.override_verified_payment and not admin.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a Super Admin can override verified payment requirements.",
+        )
 
-    payment_query = select(Payment).where(
-        Payment.tenant_id == subscription.tenant_id,
-        Payment.plan_id == subscription.plan_id,
-        Payment.status == "verified",
-    )
-    if payload.payment_id is not None:
-        payment_query = payment_query.where(Payment.id == payload.payment_id)
-    else:
-        payment_query = payment_query.where(
-            Payment.subscription_id == subscription.id
+    payment = None
+    if not payload.override_verified_payment:
+        payment_query = select(Payment).where(
+            Payment.tenant_id == subscription.tenant_id,
+            Payment.plan_id == subscription.plan_id,
+            Payment.status == "verified",
         )
-    payment = db.scalar(
-        payment_query.order_by(desc(Payment.created_at)).with_for_update()
-    )
-    if payment is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A verified payment for this subscription is required.",
+        if payload.payment_id is not None:
+            payment_query = payment_query.where(Payment.id == payload.payment_id)
+        else:
+            payment_query = payment_query.where(
+                Payment.subscription_id == subscription.id
+            )
+        payment = db.scalar(
+            payment_query.order_by(desc(Payment.created_at)).with_for_update()
         )
-    if payment.subscription_id not in {None, subscription.id}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="The verified payment is already linked to another subscription.",
-        )
+        if payment is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A verified payment for this subscription is required.",
+            )
+        if payment.subscription_id not in {None, subscription.id}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The verified payment is already linked to another subscription.",
+            )
 
     another_active = db.scalar(
         select(Subscription.id).where(
@@ -296,7 +690,8 @@ def activate_subscription(
     subscription.start_date = now
     subscription.current_period_end = now + timedelta(days=payload.duration_days)
     subscription.cancelled_at = None
-    payment.subscription_id = subscription.id
+    if payment is not None:
+        payment.subscription_id = subscription.id
     write_audit_log(
         db,
         tenant_id=subscription.tenant_id,
@@ -307,7 +702,9 @@ def activate_subscription(
         old_value={"status": previous_status},
         new_value={
             "status": subscription.status,
-            "payment_id": payment.id,
+            "payment_id": payment.id if payment else None,
+            "payment_override": payload.override_verified_payment,
+            "override_reason": payload.override_reason,
             "current_period_end": subscription.current_period_end.isoformat(),
         },
     )
@@ -448,4 +845,33 @@ def admin_audit_logs(
             "created_at": log.created_at,
         }
         for log in logs
+    ]
+
+
+@router.get("/admin/system-audit-logs")
+def admin_system_audit_logs(
+    tenant_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_super_admin),
+):
+    query = select(SystemAuditEvent)
+    if tenant_id is not None:
+        query = query.where(SystemAuditEvent.tenant_id == tenant_id)
+    events = db.scalars(
+        query.order_by(desc(SystemAuditEvent.created_at)).limit(limit)
+    ).all()
+    return [
+        {
+            "id": event.id,
+            "tenant_id": event.tenant_id,
+            "actor_user_id": event.actor_user_id,
+            "action": event.action,
+            "target_type": event.target_type,
+            "target_id": event.target_id,
+            "outcome": event.outcome,
+            "details": event.details,
+            "created_at": event.created_at,
+        }
+        for event in events
     ]

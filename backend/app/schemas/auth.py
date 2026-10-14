@@ -50,6 +50,8 @@ class UserResponse(BaseModel):
 
     is_admin: bool
 
+    is_super_admin: bool
+
     tenant_id: int | None = None
 
     class Config:

@@ -92,6 +92,16 @@ class User(Base):
 
     )
 
+    is_super_admin: Mapped[bool] = mapped_column(
+
+        Boolean,
+
+        default=False,
+
+        nullable=False,
+
+    )
+
     email_verified_at: Mapped[datetime | None] = mapped_column(
 
         DateTime,

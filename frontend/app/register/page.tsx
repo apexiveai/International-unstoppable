@@ -297,6 +297,12 @@ export default function RegisterPage() {
 
           <input
 
+            autoCapitalize="none"
+
+            autoCorrect="off"
+
+            spellCheck={false}
+
             value={username}
 
             onChange={(event) =>
@@ -325,6 +331,10 @@ export default function RegisterPage() {
 
             type="email"
 
+            autoCapitalize="none"
+
+            autoCorrect="off"
+
             value={email}
 
             onChange={(event) =>
@@ -349,6 +359,8 @@ export default function RegisterPage() {
           <input
 
             type="password"
+
+            autoCapitalize="none"
 
             value={password}
 

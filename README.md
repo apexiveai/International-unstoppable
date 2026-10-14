@@ -1,10 +1,23 @@
+[x] Subscription မရှိတဲ့ Customer က Paid Product ကို မသုံးနိုင်ခြင်း
+[x] Payment Pending ဖြစ်နေချိန်မှာ Upload ကို ပိတ်ထားခြင်း
+[x] Payment အတည်ပြုပြီးမှ သက်ဆိုင်ရာ Product ကို အသုံးပြုနိုင်ခြင်း
+[x] Customer A က Customer B ရဲ့ Jobs နဲ့ Results ကို မမြင်နိုင်ခြင်း
+[x] Launch Code သက်တမ်းကုန်ရင် အသုံးပြုမရခြင်း
+[x] Launch Code တစ်ခုကို နှစ်ကြိမ် အသုံးပြုမရခြင်း
+[x] Subscription သက်တမ်းကုန်ရင် နောက်ထပ် Paid Access မရခြင်း
+[x] Queued Job က Authorization ပြန်စစ်မရရင် Fail Closed ဖြစ်ခြင်း
+[x] Unauthorised User က Admin Verification Endpoint ကို မခေါ်နိုင်ခြင်း
+[x] Upload Size Limit ကို Public Ingress မှာ အမှန်တကယ် ကန့်သတ်ထားခြင်း
+psql -U postgres -d apexive_community -h localhost
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 You are integrating **Didit KYC (identity verification)**. Use a KYC workflow id.
 https://verify.didit.me/session/dLa60AsDfHDE
 (.venv) C:\Users\naing\Desktop\Sales\apexive-com\backend>railway connect
 
+python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8099
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --reload
-python -m pip install upgrade pip
+python -m pip install --upgrade pip
 
 > Select service Postgres
 No SSH keys found in your SSH agent or ~/.ssh/

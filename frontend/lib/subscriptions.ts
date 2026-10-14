@@ -52,7 +52,21 @@ export type SubscriptionAccess = {
 
   product_key: string;
 
+  tenant_id: number;
+
   has_access: boolean;
+
+  source: "subscription" | "enterprise_grant" | null;
+
+  grant_id: number | null;
+
+  access_type: "trial" | "complimentary" | null;
+
+  starts_at: string | null;
+
+  expires_at: string | null;
+
+  is_permanent: boolean;
 
   subscription_id: number | null;
 
@@ -61,6 +75,13 @@ export type SubscriptionAccess = {
   current_period_end: string | null;
 
 };
+
+export async function createProductLaunch(productKey: string) {
+  return apiRequest<{ url: string; expires_at: string }>(
+    `/api/subscriptions/products/${encodeURIComponent(productKey)}/launch`,
+    { method: "POST" },
+  );
+}
 
 async function apiRequest<T>(
 

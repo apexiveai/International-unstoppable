@@ -8,6 +8,7 @@ import { getClientProducts, type ClientProduct } from "@/lib/client";
 import { getMyPayments, type CreatePaymentResponse } from "@/lib/payments";
 import {
   getMySubscriptions,
+  createProductLaunch,
   getProductAccess,
   type Subscription,
   type SubscriptionAccess,
@@ -21,6 +22,25 @@ function ClientDashboard() {
   const [payments, setPayments] = useState<CreatePaymentResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [openingProduct, setOpeningProduct] = useState("");
+
+  async function openProduct(product: ProductAccess) {
+    setError("");
+    setOpeningProduct(product.product_key);
+    try {
+      if (product.product_key === "trademark") {
+        const launch = await createProductLaunch(product.product_key);
+        window.location.assign(launch.url);
+        return;
+      }
+      window.location.assign(
+        product.product_key === "workforce" ? "/workforce" : product.url,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to open product.");
+      setOpeningProduct("");
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -101,7 +121,7 @@ function ClientDashboard() {
               <div className="mb-4 flex items-end justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-950">Product access</h2>
-                  <p className="mt-1 text-sm text-slate-500">Product access is granted only after verified payment and activation.</p>
+                  <p className="mt-1 text-sm text-slate-500">Access is available after verified payment or an approved Enterprise grant.</p>
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
@@ -113,14 +133,18 @@ function ClientDashboard() {
                         <p className="mt-1 text-xs text-slate-500">{product.product_key}</p>
                       </div>
                       <span className={`rounded-full px-3 py-1 text-xs font-bold ${product.has_access ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
-                        {product.has_access ? "Access active" : product.status ?? "No subscription"}
+                        {product.has_access
+                          ? product.source === "enterprise_grant"
+                            ? `Enterprise ${product.access_type ?? "access"}`
+                            : "Access active"
+                          : product.status ?? "No subscription"}
                       </span>
                     </div>
                     <div className="mt-5">
                       {product.has_access ? (
-                        <a href={product.url} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 hover:underline">
-                          Open product
-                        </a>
+                        <button disabled={openingProduct === product.product_key} onClick={() => void openProduct(product)} className="font-semibold text-blue-700 hover:underline disabled:opacity-50">
+                          {openingProduct === product.product_key ? "Opening…" : "Open product"}
+                        </button>
                       ) : (
                         <Link href={`/pricing?product=${encodeURIComponent(product.product_key)}`} className="font-semibold text-blue-700 hover:underline">
                           View available plans

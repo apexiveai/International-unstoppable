@@ -19,3 +19,12 @@ def require_admin(current_user=Depends(require_authenticated_user)):
             detail="Administrator access required.",
         )
     return current_user
+
+
+def require_super_admin(current_user=Depends(require_authenticated_user)):
+    if not current_user.is_admin or not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super administrator access required.",
+        )
+    return current_user

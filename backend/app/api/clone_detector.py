@@ -1,26 +1,22 @@
 from fastapi import (
-
     APIRouter,
-
-    File,
-
+    Depends,
     HTTPException,
-
-    UploadFile,
-
+    Request,
 )
+from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.auth import get_current_user
+from app.database import get_db
+from app.models import User
 from app.schemas.clone_detector import (
-
     CloneDetectorResponse,
-
 )
-
 from app.services.clone_detector import (
-
     analyze_clone,
-
 )
+from app.services.product_access import require_tenant_product_access
 
 router = APIRouter(
 
@@ -86,37 +82,82 @@ def validate_file(
 
         )
 
+def validate_file_signature(filename: str, content: bytes) -> None:
+    extension = filename.lower().rsplit(".", 1)[-1]
+    valid = {
+        "pdf": content.startswith(b"%PDF-"),
+        "jpg": content.startswith(b"\xff\xd8\xff"),
+        "jpeg": content.startswith(b"\xff\xd8\xff"),
+        "png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "webp": (
+            len(content) >= 12
+            and content[:4] == b"RIFF"
+            and content[8:12] == b"WEBP"
+        ),
+    }
+    if not valid.get(extension, False):
+        raise HTTPException(
+            status_code=400,
+            detail=f"The uploaded {extension.upper()} file has an invalid file signature.",
+        )
+
 @router.post(
-
     "/analyze",
-
     response_model=CloneDetectorResponse,
-
 )
-
 async def analyze_clone_documents(
-
-    original: UploadFile = File(...),
-
-    comparison: UploadFile = File(...),
-
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    if user.tenant_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="User is not assigned to a tenant.",
+        )
+    require_tenant_product_access(db, user.tenant_id, "trademark")
 
-    validate_file(
-
-        original.filename
-
-    )
-
-    validate_file(
-
-        comparison.filename
-
-    )
-
-    original_bytes = await original.read()
-
-    comparison_bytes = await comparison.read()
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > 2 * MAX_FILE_SIZE + 64 * 1024:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Upload request exceeds the allowed size.",
+                )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid content length.",
+            ) from exc
+    try:
+        form = await request.form(max_files=2, max_fields=0, max_part_size=MAX_FILE_SIZE)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid multipart upload.",
+        ) from exc
+    original_files = form.getlist("original")
+    comparison_files = form.getlist("comparison")
+    if (
+        len(original_files) != 1
+        or len(comparison_files) != 1
+        or not isinstance(original_files[0], StarletteUploadFile)
+        or not isinstance(comparison_files[0], StarletteUploadFile)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Exactly one original file and one comparison file are required.",
+        )
+    original = original_files[0]
+    comparison = comparison_files[0]
+    try:
+        validate_file(original.filename)
+        validate_file(comparison.filename)
+        original_bytes = await original.read(MAX_FILE_SIZE + 1)
+        comparison_bytes = await comparison.read(MAX_FILE_SIZE + 1)
+    finally:
+        await form.close()
 
     if len(original_bytes) > MAX_FILE_SIZE:
 
@@ -155,8 +196,9 @@ async def analyze_clone_documents(
             status_code=400,
 
             detail="Comparison file is empty.",
-
         )
+    validate_file_signature(original.filename or "", original_bytes)
+    validate_file_signature(comparison.filename or "", comparison_bytes)
 
     try:
 

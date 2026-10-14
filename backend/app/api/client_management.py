@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import generate_temporary_password, hash_password
-from app.core.authorization import require_admin
+from app.core.authorization import require_super_admin as require_admin
 from app.database import get_db
 from app.models import Tenant, User
 from app.services.audit_service import write_audit_log

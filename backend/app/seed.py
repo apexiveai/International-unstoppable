@@ -1,6 +1,6 @@
-from sqlalchemy import select
+import os
 
-from app.auth import hash_password
+from sqlalchemy import select
 
 from app.database import SessionLocal
 
@@ -155,50 +155,22 @@ def seed():
     db = SessionLocal()
 
     try:
-
-        # --------------------------------------------------
-
-        # Seed user
-
-        # --------------------------------------------------
-
+        username = os.getenv("SEED_AUTHOR_USERNAME", "").strip()
+        if not username:
+            raise RuntimeError(
+                "Set SEED_AUTHOR_USERNAME to an existing administrator before seeding forum content."
+            )
         user = db.scalar(
-
             select(User).where(
-
-                User.username == "apexive"
-
+                User.username == username,
+                User.is_admin.is_(True),
+                User.is_active.is_(True),
             )
-
         )
-
-        if not user:
-
-            user = User(
-
-                username="apexive",
-
-                email="admin@apexive.ai",
-
-                password_hash=hash_password(
-
-                    "ChangeThisPassword123!"
-
-                ),
-
-                display_name="Apexive",
-
-                bio="Apexive Community administrator.",
-
-                is_active=True,
-
-                is_admin=True,
-
+        if user is None:
+            raise RuntimeError(
+                "The configured seed author must be an existing active administrator."
             )
-
-            db.add(user)
-
-            db.flush()
 
         # --------------------------------------------------
 

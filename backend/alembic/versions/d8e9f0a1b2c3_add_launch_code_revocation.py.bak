@@ -1,0 +1,40 @@
+"""Add administrator revocation to product launch handoff codes."""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision: str = "d8e9f0a1b2c3"
+down_revision: Union[str, Sequence[str], None] = "c7d8e9f0a1b2"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    op.add_column(
+        "product_launch_codes",
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "product_launch_codes",
+        sa.Column("revoked_by_id", sa.Integer(), nullable=True),
+    )
+    op.create_foreign_key(
+        "fk_product_launch_codes_revoked_by_id_users",
+        "product_launch_codes",
+        "users",
+        ["revoked_by_id"],
+        ["id"],
+    )
+
+
+def downgrade() -> None:
+    op.drop_constraint(
+        "fk_product_launch_codes_revoked_by_id_users",
+        "product_launch_codes",
+        type_="foreignkey",
+    )
+    op.drop_column("product_launch_codes", "revoked_by_id")
+    op.drop_column("product_launch_codes", "revoked_at")

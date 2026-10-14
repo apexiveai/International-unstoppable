@@ -19,6 +19,7 @@ export type AdminAccount = {
   display_name: string;
   is_active: boolean;
   is_admin: true;
+  is_super_admin: boolean;
   created_at: string;
 };
 
@@ -68,6 +69,21 @@ export type AdminAuditLog = {
   old_value: string | null;
   new_value: string | null;
   created_at: string;
+};
+
+export type AdminProductGrant = {
+  id: number;
+  tenant_id: number;
+  product_key: string;
+  access_type: "trial" | "complimentary";
+  starts_at: string;
+  expires_at: string | null;
+  is_permanent: boolean;
+  reason: string;
+  granted_by_id: number;
+  created_at: string;
+  revoked_at: string | null;
+  revoked_by_id: number | null;
 };
 
 async function adminRequest<T>(
@@ -158,6 +174,39 @@ export function getAdminPlanSettings() {
   return adminRequest<AdminPlan[]>("/api/admin/settings/plans");
 }
 
+export function getAdminProductGrants() {
+  return adminRequest<{ items: AdminProductGrant[] }>("/api/admin/product-grants");
+}
+
+export function createAdminProductGrant(payload: {
+  tenant_id: number;
+  product_key: string;
+  access_type: "trial" | "complimentary";
+  starts_at: string;
+  expires_at: string | null;
+  is_permanent: boolean;
+  reason: string;
+}) {
+  return adminRequest<AdminProductGrant>("/api/admin/product-grants", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revokeAdminProductGrant(grantId: number) {
+  return adminRequest<AdminProductGrant>(
+    `/api/admin/product-grants/${grantId}/revoke`,
+    { method: "POST" },
+  );
+}
+
+export function createProductLaunch(productKey: string) {
+  return adminRequest<{ url: string; expires_at: string }>(
+    `/api/subscriptions/products/${encodeURIComponent(productKey)}/launch`,
+    { method: "POST" },
+  );
+}
+
 export function updateAdminPlanSettings(
   planId: number,
   payload: Partial<
@@ -228,13 +277,24 @@ export function refundAdminPayment(paymentId: number) {
 export function updateAdminSubscription(
   subscriptionId: number,
   action: "activate" | "suspend" | "cancel",
+  override?: { reason: string },
 ) {
   return adminRequest<AdminSubscription>(
     `/api/admin/subscriptions/${subscriptionId}/${action}`,
     {
       method: "POST",
       ...(action === "activate"
-        ? { body: JSON.stringify({ duration_days: 30 }) }
+        ? {
+            body: JSON.stringify({
+              duration_days: 30,
+              ...(override
+                ? {
+                    override_verified_payment: true,
+                    override_reason: override.reason,
+                  }
+                : {}),
+            }),
+          }
         : {}),
     },
   );
