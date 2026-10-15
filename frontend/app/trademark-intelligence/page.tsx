@@ -21,6 +21,7 @@ import {
 
 } from "lucide-react";
 import RequireSubscription from "@/components/RequireSubscription";
+import TrademarkProductLaunchButton from "@/components/TrademarkProductLaunchButton";
 import TrademarkWorkspace from "@/components/TrademarkWorkspace";
 
 const features = [
@@ -392,18 +393,7 @@ export default function TrademarkIntelligencePage() {
 
               </div>
 
-              <a
-                href="#workspace"
-
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-6 py-4 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
-
-              >
-
-                Open Workspace
-
-                <ArrowRight className="h-4 w-4" />
-
-              </a>
+              <TrademarkProductLaunchButton />
 
             </div>
 
