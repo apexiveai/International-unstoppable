@@ -87,10 +87,30 @@ export type SubscriptionAccess = {
 };
 
 export async function createProductLaunch(productKey: string) {
-  return apiRequest<{ url: string; expires_at: string }>(
+  const launch = await apiRequest<{ url: string; expires_at: string }>(
     `/api/subscriptions/products/${encodeURIComponent(productKey)}/launch`,
     { method: "POST" },
   );
+  const configuredDetectorUrl =
+    productKey === "trademark"
+      ? process.env.NEXT_PUBLIC_TRADEMARK_DETECTOR_URL?.trim()
+      : undefined;
+  if (!configuredDetectorUrl) return launch;
+
+  const detectorUrl = new URL(configuredDetectorUrl);
+  if (
+    detectorUrl.protocol !== "https:" &&
+    !(detectorUrl.protocol === "http:" && detectorUrl.hostname === "localhost")
+  ) {
+    throw new Error("The Trademark Detector URL must use HTTPS.");
+  }
+  const launchUrl = new URL(launch.url);
+  const accessCode = launchUrl.searchParams.get("access_code");
+  if (!accessCode) {
+    throw new Error("The backend did not return a Trademark access code.");
+  }
+  detectorUrl.searchParams.set("access_code", accessCode);
+  return { ...launch, url: detectorUrl.toString() };
 }
 
 async function apiRequest<T>(

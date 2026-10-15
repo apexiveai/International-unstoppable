@@ -17,6 +17,7 @@ import {
   getAdminSubscriptions,
   rejectAdminPayment,
   renewAdminSubscription,
+  sendAdminSubscriptionReminders,
   updateAdminSubscription,
   verifyAdminPayment,
   type AdminPayment,
@@ -138,6 +139,36 @@ function AdminSubscriptionsDashboard() {
         reason instanceof Error
           ? reason.message
           : "The requested action failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendExpiryReminders() {
+    if (
+      !window.confirm(
+        "Send email reminders to eligible clients whose subscriptions expire in 3 or 7 days? Already-sent reminders will be skipped.",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await sendAdminSubscriptionReminders();
+      setNotice(
+        result.processed === 0
+          ? "No new 3-day or 7-day subscription reminders were due."
+          : `${result.processed} reminder${result.processed === 1 ? "" : "s"} processed; ${result.email_failures} email delivery failure${result.email_failures === 1 ? "" : "s"}.`,
+      );
+      await load();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to send subscription email reminders.",
       );
     } finally {
       setBusy(false);
@@ -309,10 +340,27 @@ function AdminSubscriptionsDashboard() {
   const allVisibleSelected =
     subscriptions.length > 0 &&
     subscriptions.every((subscription) => selectedIds.includes(subscription.id));
+  const revenueByCurrency = new Map<
+    string,
+    AdminSubscriptionStatistics["revenue_history"]
+  >();
+  for (const entry of statistics?.revenue_history ?? []) {
+    const entries = revenueByCurrency.get(entry.currency) ?? [];
+    entries.push(entry);
+    revenueByCurrency.set(entry.currency, entries);
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-5 py-10 text-white sm:px-8">
       <div className="mx-auto max-w-7xl">
+        {isSuperAdmin && (
+          <Link
+            href="/admin"
+            className="mr-4 text-sm text-cyan-300 hover:underline"
+          >
+            Back to Admin Dashboard
+          </Link>
+        )}
         <Link href="/" className="text-sm text-cyan-300 hover:underline">
           Back to community
         </Link>
@@ -342,17 +390,17 @@ function AdminSubscriptionsDashboard() {
           <div className="mt-8 space-y-8">
             <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                ["Active subscriptions", statistics?.active_subscriptions ?? 0],
-                ["Expired subscriptions", statistics?.expired_subscriptions ?? 0],
+                ["Total Active", statistics?.active_subscriptions ?? 0],
                 [
-                  "Monthly revenue",
+                  "Revenue this month",
                   statistics
                     ? Object.entries(statistics.monthly_revenue_by_currency)
                         .map(([currency, amount]) => `${amount} ${currency}`)
                         .join(" · ") || "0"
                     : "—",
                 ],
-                ["Pending payments", statistics?.pending_payment_requests ?? 0],
+                ["Pending Requests", statistics?.pending_payment_requests ?? 0],
+                ["Expiring Soon", statistics?.expiring_soon_count ?? 0],
               ].map(([label, value]) => (
                 <article
                   key={label}
@@ -362,6 +410,181 @@ function AdminSubscriptionsDashboard() {
                   <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
                 </article>
               ))}
+            </section>
+
+            <section className="grid gap-4 xl:grid-cols-2">
+              <article className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Revenue Dashboard</h2>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Verified payments by month and currency · last 6 months
+                    </p>
+                  </div>
+                  {canManage && (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void runAction(
+                          () =>
+                            downloadAdminReport(
+                              "/api/admin/revenue-report.csv",
+                              "revenue-report.csv",
+                            ),
+                          "Revenue report downloaded.",
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 disabled:opacity-40"
+                    >
+                      Export CSV
+                    </button>
+                  )}
+                </div>
+                <div className="mt-5 space-y-5">
+                  {[...revenueByCurrency.entries()].map(([currency, entries]) => {
+                    const maxAmount = Math.max(
+                      ...entries.map((entry) => Number(entry.amount)),
+                      0,
+                    );
+                    return (
+                      <div key={currency}>
+                        <p className="mb-2 text-sm font-semibold text-slate-200">
+                          {currency}
+                        </p>
+                        <div className="space-y-2">
+                          {entries.map((entry) => {
+                            const amount = Number(entry.amount);
+                            const width =
+                              maxAmount > 0
+                                ? Math.max((amount / maxAmount) * 100, amount > 0 ? 3 : 0)
+                                : 0;
+                            return (
+                              <div
+                                key={`${entry.month}-${entry.currency}`}
+                                className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-3 text-xs"
+                              >
+                                <span className="text-slate-400">
+                                  {new Date(`${entry.month}-01T00:00:00`).toLocaleDateString(
+                                    undefined,
+                                    { month: "short", year: "2-digit" },
+                                  )}
+                                </span>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                  <div
+                                    className="h-full rounded-full bg-cyan-400"
+                                    style={{ width: `${width}%` }}
+                                  />
+                                </div>
+                                <span className="min-w-20 text-right text-slate-200">
+                                  {entry.amount}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!revenueByCurrency.size && (
+                    <p className="text-sm text-slate-500">
+                      No verified payments recorded in the last 6 months.
+                    </p>
+                  )}
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Expiring Soon</h2>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Active subscriptions ending in the next 30 days
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-200">
+                    {statistics?.expiring_soon_count ?? 0}
+                  </span>
+                </div>
+                <div className="mt-4 divide-y divide-slate-800">
+                  {(statistics?.expiring_soon ?? []).map((subscription) => (
+                    <div
+                      key={subscription.id}
+                      className="flex flex-wrap items-center justify-between gap-2 py-3"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-slate-100">
+                          {subscription.tenant_name}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {subscription.plan_name}
+                        </p>
+                      </div>
+                      <time
+                        dateTime={subscription.current_period_end}
+                        className="text-xs text-amber-200"
+                      >
+                        {new Date(
+                          subscription.current_period_end,
+                        ).toLocaleDateString()}
+                      </time>
+                    </div>
+                  ))}
+                  {!statistics?.expiring_soon.length && (
+                    <p className="py-4 text-sm text-slate-500">
+                      No active subscriptions expire within 30 days.
+                    </p>
+                  )}
+                  {Boolean(
+                    statistics &&
+                      statistics.expiring_soon_count >
+                        statistics.expiring_soon.length,
+                  ) && (
+                    <p className="pt-3 text-xs text-slate-500">
+                      Showing the first {statistics?.expiring_soon.length} of{" "}
+                      {statistics?.expiring_soon_count} subscriptions.
+                    </p>
+                  )}
+                </div>
+              </article>
+            </section>
+
+            <section className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Email Notifications</h2>
+                  <p className="mt-1 max-w-3xl text-sm text-slate-400">
+                    Subscription expiry emails are sent 7 and 3 days before
+                    renewal. Already-sent reminders are skipped automatically.
+                  </p>
+                  <p
+                    className={`mt-2 text-xs font-semibold ${
+                      statistics?.email_enabled
+                        ? "text-emerald-300"
+                        : "text-amber-300"
+                    }`}
+                  >
+                    {statistics?.email_enabled
+                      ? "Email delivery is enabled."
+                      : "Email delivery is disabled. Configure EMAIL_ENABLED and SMTP settings in the backend."}
+                  </p>
+                </div>
+                {canManage && (
+                  <button
+                    disabled={busy || !statistics?.email_enabled}
+                    onClick={() => void sendExpiryReminders()}
+                    className="rounded-lg border border-cyan-700 px-4 py-2 text-sm font-semibold text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Send due reminders
+                  </button>
+                )}
+              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                To send reminders automatically, schedule{" "}
+                <code className="text-slate-300">
+                  python send_subscription_reminders.py
+                </code>{" "}
+                to run daily from the backend directory.
+              </p>
             </section>
 
             {canManage && (
@@ -389,6 +612,10 @@ function AdminSubscriptionsDashboard() {
                       </option>
                     ))}
                   </select>
+                  <span className="text-[11px] leading-4 text-slate-500">
+                    Choose the client who should receive this subscription. Use
+                    their name and email to identify the correct account.
+                  </span>
                 </label>
                 <label className="grid gap-1 text-xs text-slate-400">
                   Plan

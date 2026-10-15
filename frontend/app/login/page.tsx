@@ -118,7 +118,11 @@ export default function LoginPage() {
 
         const next =
           params.get("next") ||
-          (data.user?.is_admin ? "/admin/subscriptions" : "/");
+          (data.user?.is_admin
+            ? data.user.is_super_admin
+              ? "/admin"
+              : "/admin/subscriptions"
+            : "/");
         router.replace(next);
 
       } catch (verificationError: unknown) {
@@ -349,7 +353,11 @@ export default function LoginPage() {
 
       const next =
         params.get("next") ||
-        (data.user?.is_admin ? "/admin/subscriptions" : "/");
+        (data.user?.is_admin
+          ? data.user.is_super_admin
+            ? "/admin"
+            : "/admin/subscriptions"
+          : "/");
 
       router.replace(next);
     } catch (error: unknown) {

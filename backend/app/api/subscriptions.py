@@ -36,6 +36,7 @@ from app.services.subscription_notifications import (
     queue_tenant_notification,
     send_tenant_subscription_email,
 )
+from app.services.subscription_reminders import send_expiry_reminders
 from app.services.product_access import (
     PUBLISHED_PRODUCT_KEYS,
     build_product_response,
@@ -663,6 +664,13 @@ def admin_subscription_statistics(
 ):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    revenue_start = month_start
+    for _ in range(5):
+        revenue_start = (
+            revenue_start.replace(year=revenue_start.year - 1, month=12)
+            if revenue_start.month == 1
+            else revenue_start.replace(month=revenue_start.month - 1)
+        )
     active_count = db.scalar(
         select(func.count(Subscription.id)).where(
             Subscription.status == "active",
@@ -703,6 +711,71 @@ def admin_subscription_statistics(
         .group_by(Payment.currency)
         .order_by(Payment.currency)
     ).all()
+    revenue_history_rows = db.execute(
+        select(
+            func.extract("year", Payment.paid_at),
+            func.extract("month", Payment.paid_at),
+            Payment.currency,
+            func.sum(Payment.amount),
+        )
+        .where(
+            Payment.status == "verified",
+            Payment.paid_at >= revenue_start,
+            Payment.paid_at < next_month,
+        )
+        .group_by(
+            func.extract("year", Payment.paid_at),
+            func.extract("month", Payment.paid_at),
+            Payment.currency,
+        )
+        .order_by(
+            func.extract("year", Payment.paid_at),
+            func.extract("month", Payment.paid_at),
+            Payment.currency,
+        )
+    ).all()
+    revenue_months = []
+    current_month = revenue_start
+    while current_month < next_month:
+        revenue_months.append(current_month.strftime("%Y-%m"))
+        current_month = (
+            current_month.replace(year=current_month.year + 1, month=1)
+            if current_month.month == 12
+            else current_month.replace(month=current_month.month + 1)
+        )
+    revenue_by_month_currency = {
+        (f"{int(year):04d}-{int(month):02d}", currency): str(amount)
+        for year, month, currency, amount in revenue_history_rows
+    }
+    revenue_currencies = sorted({currency for _, currency in revenue_by_month_currency})
+    revenue_history = [
+        {
+            "month": month,
+            "currency": currency,
+            "amount": revenue_by_month_currency.get((month, currency), "0"),
+        }
+        for month in revenue_months
+        for currency in revenue_currencies
+    ]
+    expiring_soon_query = (
+        select(Subscription)
+        .options(joinedload(Subscription.plan), joinedload(Subscription.tenant))
+        .where(
+            Subscription.status == "active",
+            Subscription.current_period_end > now,
+            Subscription.current_period_end <= now + timedelta(days=30),
+        )
+    )
+    expiring_soon_count = db.scalar(
+        select(func.count(Subscription.id)).where(
+            Subscription.status == "active",
+            Subscription.current_period_end > now,
+            Subscription.current_period_end <= now + timedelta(days=30),
+        )
+    ) or 0
+    expiring_soon = db.scalars(
+        expiring_soon_query.order_by(Subscription.current_period_end).limit(10)
+    ).all()
     return {
         "active_subscriptions": active_count,
         "expired_subscriptions": expired_count,
@@ -714,6 +787,35 @@ def admin_subscription_statistics(
             currency: str(amount) for currency, amount in revenue_by_currency
         },
         "pending_payment_requests": pending_payments,
+        "revenue_history": revenue_history,
+        "expiring_soon_count": expiring_soon_count,
+        "expiring_soon": [
+            {
+                "id": item.id,
+                "tenant_name": item.tenant.name,
+                "plan_name": item.plan.name,
+                "current_period_end": item.current_period_end,
+            }
+            for item in expiring_soon
+        ],
+        "email_enabled": settings.email_enabled,
+    }
+
+
+@router.post("/admin/subscription-reminders")
+def admin_send_subscription_reminders(
+    _admin: User = Depends(require_subscription_operator),
+    db: Session = Depends(get_db),
+):
+    if not settings.email_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription email delivery is disabled. Configure EMAIL_ENABLED and SMTP settings first.",
+        )
+    processed, email_failures = send_expiry_reminders(db)
+    return {
+        "processed": processed,
+        "email_failures": email_failures,
     }
 
 

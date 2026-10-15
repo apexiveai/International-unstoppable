@@ -71,6 +71,8 @@ app = CORSMiddleware(
     allow_origins=[
         "https://www.apexiveai.com",
         "https://apexiveai.com",
+        "https://trademark.apexiveai.com",
+        "https://apexiveai-detector-v1-1.vercel.app",
     ]
     + [
         origin.strip().rstrip("/")

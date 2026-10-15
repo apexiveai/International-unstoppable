@@ -57,13 +57,16 @@ The normal billing flow is:
    `GET /api/admin/system-audit-logs`.
 
 The subscription administration page provides tenant/plan/status filters,
-subscription KPIs, details and audit history, bounded bulk extension/cancellation,
-CSV/XLSX exports, and a verified-payment revenue CSV. Monthly revenue is
-reported separately per currency. To deliver 7-day and 3-day expiry reminders,
-schedule `python send_subscription_reminders.py` to run daily from the
-`backend` directory. The job records in-app notifications before attempting
-email delivery; configure SMTP settings to enable email. Delivery failures are
-logged and included in the command summary.
+active, revenue, pending-request, and expiring-soon summary cards, a six-month
+verified-payment revenue dashboard by currency, an expiring-subscription list,
+details and audit history, bounded bulk extension/cancellation, and CSV/XLSX
+exports. Configure `EMAIL_ENABLED=true` and valid `SMTP_*` settings to enable
+subscription expiry emails. Administrators can send due 7-day and 3-day
+reminders from the subscription dashboard; the action skips reminders already
+sent. For automatic delivery, schedule `python send_subscription_reminders.py`
+to run daily from the `backend` directory. The job records in-app notifications
+before attempting email delivery. Delivery failures are logged and included in
+the command summary.
 
 The Detector API checks entitlement before parsing uploads. The separate
 Detector service verifies the bearer token and tenant against this API, scopes
@@ -71,6 +74,14 @@ jobs/results to the authenticated tenant, and rechecks authorization for queued
 processing. Deploy it with a reachable HTTPS central API URL and configure
 request-body limits at the reverse proxy as well as the application; requests
 without a trustworthy `Content-Length` still require an ingress-level cap.
+
+Trademark Conflict also offers a domain availability lookup backed by the
+Spaceship API. Set `SPACESHIP_API_KEY` and `SPACESHIP_API_SECRET` in the backend
+environment (and optionally `SPACESHIP_API_BASE_URL`, defaulting to
+`https://spaceship.dev/api/v1`). Only authenticated tenants with active
+Trademark Conflict access can use `POST /api/clone-detector/domains/availability`.
+This lookup reports availability only; it does not register or purchase domains
+and is not a trademark clearance or legal determination.
 
 Run the Alembic migration before deploying the API:
 

@@ -16,9 +16,17 @@ from app.database import get_db
 from app.models import TrademarkConflictCheck, User
 from app.schemas.clone_detector import (
     CloneDetectorResponse,
+    SpaceshipDomainAvailabilityRequest,
+    SpaceshipDomainAvailabilityResponse,
 )
 from app.services.clone_detector import (
     analyze_clone,
+)
+from app.services.spaceship_domains import (
+    SpaceshipError,
+    SpaceshipNotConfiguredError,
+    SpaceshipTimeoutError,
+    check_domain_availability,
 )
 from app.services.product_access import require_tenant_product_access
 from app.services.audit_service import write_audit_log
@@ -47,6 +55,33 @@ ALLOWED_EXTENSIONS = {
     ".webp",
 
 }
+
+
+@router.post(
+    "/domains/availability",
+    response_model=SpaceshipDomainAvailabilityResponse,
+)
+async def check_trademark_domain_availability(
+    payload: SpaceshipDomainAvailabilityRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.tenant_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="User is not assigned to a tenant.",
+        )
+    require_tenant_product_access(db, user.tenant_id, "trademark")
+
+    try:
+        return await check_domain_availability(payload.domain)
+    except SpaceshipNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SpaceshipTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except SpaceshipError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
 
 def validate_file(
 

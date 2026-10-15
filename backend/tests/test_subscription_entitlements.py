@@ -1,7 +1,9 @@
+import asyncio
 import hashlib
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from unittest.mock import AsyncMock, Mock
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, update
@@ -33,6 +35,7 @@ from app.services.product_access import (
     subscription_is_active,
     tenant_product_access,
 )
+from app.services.spaceship_domains import check_domain_availability
 
 
 TEST_TABLES = [
@@ -268,6 +271,82 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
         analyze.assert_not_called()
+
+    def test_spaceship_domain_lookup_requires_trademark_entitlement(self):
+        with patch(
+            "app.api.clone_detector.check_domain_availability",
+            new_callable=AsyncMock,
+        ) as lookup:
+            response = self.client.post(
+                "/api/clone-detector/domains/availability",
+                json={"domain": "example.com"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        lookup.assert_not_awaited()
+
+    def test_spaceship_domain_lookup_returns_availability_for_entitled_tenant(self):
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
+        self.db.commit()
+
+        with patch(
+            "app.api.clone_detector.check_domain_availability",
+            new_callable=AsyncMock,
+            return_value={"domain": "example.com", "result": "available"},
+        ) as lookup:
+            response = self.client.post(
+                "/api/clone-detector/domains/availability",
+                json={"domain": " Example.COM. "},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json(),
+            {"domain": "example.com", "result": "available"},
+        )
+        lookup.assert_awaited_once_with("example.com")
+
+    def test_spaceship_domain_lookup_rejects_urls(self):
+        response = self.client.post(
+            "/api/clone-detector/domains/availability",
+            json={"domain": "https://example.com"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_spaceship_service_posts_to_availability_api(self):
+        response = Mock(status_code=200, is_success=True)
+        response.json.return_value = {
+            "domains": [{"domain": "example.com", "result": "available"}]
+        }
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = response
+
+        with (
+            patch("app.services.spaceship_domains.settings.spaceship_api_key", "key"),
+            patch(
+                "app.services.spaceship_domains.settings.spaceship_api_secret",
+                "secret",
+            ),
+            patch(
+                "app.services.spaceship_domains.httpx.AsyncClient",
+                return_value=client,
+            ),
+        ):
+            result = asyncio.run(check_domain_availability("example.com"))
+
+        self.assertEqual(result, {"domain": "example.com", "result": "available"})
+        client.post.assert_awaited_once_with(
+            "https://spaceship.dev/api/v1/domains/available",
+            headers={
+                "X-Api-Key": "key",
+                "X-Api-Secret": "secret",
+                "Content-Type": "application/json",
+            },
+            json={"domains": ["example.com"]},
+        )
 
     def test_detector_accepts_entitled_upload_and_associates_trusted_user(self):
         subscription = self.add_subscription()
@@ -586,6 +665,51 @@ class SubscriptionEntitlementTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["items"][0]["id"], self.user.id)
+
+    def test_admin_subscription_statistics_include_revenue_trend_and_expiring_soon(self):
+        expiring = self.add_subscription(end_delta=timedelta(days=5))
+        self.add_subscription(end_delta=timedelta(days=45))
+        payment = self.add_payment(expiring)
+        payment.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        pending_subscription = self.add_subscription(status="pending")
+        self.add_payment(pending_subscription, status="pending")
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        response = self.client.get("/api/admin/subscription-statistics")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        statistics = response.json()
+        self.assertEqual(statistics["active_subscriptions"], 2)
+        self.assertEqual(statistics["pending_payment_requests"], 1)
+        self.assertEqual(statistics["expiring_soon_count"], 1)
+        self.assertEqual(statistics["expiring_soon"][0]["id"], expiring.id)
+        self.assertEqual(statistics["expiring_soon"][0]["tenant_name"], "Tenant A")
+        self.assertEqual(statistics["monthly_revenue_by_currency"]["USD"], "10.00")
+        self.assertEqual(len(statistics["revenue_history"]), 6)
+        self.assertEqual(statistics["revenue_history"][-1]["amount"], "10.00")
+
+    def test_admin_can_trigger_expiry_emails_when_delivery_is_enabled(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+        with patch("app.api.subscriptions.settings.email_enabled", True), patch(
+            "app.api.subscriptions.send_expiry_reminders",
+            return_value=(2, 1),
+        ) as send_reminders:
+            response = self.client.post("/api/admin/subscription-reminders")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"processed": 2, "email_failures": 1})
+        send_reminders.assert_called_once()
+
+    def test_admin_cannot_trigger_expiry_emails_when_delivery_is_disabled(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+        with patch("app.api.subscriptions.settings.email_enabled", False), patch(
+            "app.api.subscriptions.send_expiry_reminders"
+        ) as send_reminders:
+            response = self.client.post("/api/admin/subscription-reminders")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        send_reminders.assert_not_called()
 
     def test_super_administrator_can_use_platform_admin_routes(self):
         api.dependency_overrides[get_current_user] = lambda: self.super_admin

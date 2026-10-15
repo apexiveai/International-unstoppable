@@ -94,6 +94,19 @@ export type AdminSubscriptionStatistics = {
   currency: string | null;
   monthly_revenue_by_currency: Record<string, string>;
   pending_payment_requests: number;
+  revenue_history: Array<{
+    month: string;
+    currency: string;
+    amount: string;
+  }>;
+  expiring_soon_count: number;
+  expiring_soon: Array<{
+    id: number;
+    tenant_name: string;
+    plan_name: string;
+    current_period_end: string;
+  }>;
+  email_enabled: boolean;
 };
 
 export type AdminSubscriptionClient = {
@@ -207,6 +220,13 @@ export function getAdminSubscriptions(filters: {
 export function getAdminSubscriptionStatistics() {
   return adminRequest<AdminSubscriptionStatistics>(
     "/api/admin/subscription-statistics",
+  );
+}
+
+export function sendAdminSubscriptionReminders() {
+  return adminRequest<{ processed: number; email_failures: number }>(
+    "/api/admin/subscription-reminders",
+    { method: "POST" },
   );
 }
 

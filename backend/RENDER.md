@@ -15,8 +15,10 @@ Set these service environment variables in Render:
 - `DATABASE_URL`: the production PostgreSQL connection string.
 - `JWT_SECRET`: a newly generated, private random secret. Never use a checked-in
   example or development value.
-- `FRONTEND_URL`: `https://www.apexiveai.com`. Separate additional allowed
-  frontend origins with commas.
+- `FRONTEND_URL`:
+  `https://www.apexiveai.com,https://trademark.apexiveai.com,https://apexiveai-detector-v1-1.vercel.app`.
+  Separate allowed frontend origins with commas so the Next.js site and both
+  Vite Detector hostnames can call the API.
 
 Configure optional `SMTP_*`, `DIDIT_*`, and `EMBEDDING_*` variables only when
 those features are enabled. Keep all credentials in Render's environment
@@ -28,9 +30,16 @@ Set the Vercel project's **Root Directory** to `frontend`, then configure:
 
 - `NEXT_PUBLIC_API_URL`: `https://international-unstoppable.onrender.com`
 - `NEXT_PUBLIC_SITE_URL`: `https://www.apexiveai.com`
+- `NEXT_PUBLIC_TRADEMARK_DETECTOR_URL`:
+  `https://trademark.apexiveai.com` (the Vite deployment at
+  `https://apexiveai-detector-v1-1.vercel.app/`).
 
 Set any other `NEXT_PUBLIC_*` values required by the feature using them, then
 redeploy so Next.js includes the values in the frontend build.
+
+Configure the Vite Detector deployment's `APEXIVE_API_URL` to
+`https://international-unstoppable.onrender.com`. Its custom domain and the
+Vercel deployment URL should serve the same Detector application.
 
 ## Domain routing
 

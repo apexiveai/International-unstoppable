@@ -52,6 +52,11 @@ type CheckHistory = {
   pages: number;
 };
 
+type DomainAvailability = {
+  domain: string;
+  result: "available" | "taken" | "reserved";
+};
+
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 async function request<T>(
@@ -98,6 +103,11 @@ export default function TrademarkWorkspace() {
   const [page, setPage] = useState(1);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [domainName, setDomainName] = useState("");
+  const [domainAvailability, setDomainAvailability] =
+    useState<DomainAvailability | null>(null);
+  const [checkingDomain, setCheckingDomain] = useState(false);
+  const [domainError, setDomainError] = useState("");
   const [error, setError] = useState("");
 
   function selectFile(
@@ -191,6 +201,31 @@ export default function TrademarkWorkspace() {
           ? reason.message
           : "Unable to load this conflict check.",
       );
+    }
+  }
+
+  async function checkDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCheckingDomain(true);
+    setDomainError("");
+    setDomainAvailability(null);
+    try {
+      const availability = await request<DomainAvailability>(
+        "/api/clone-detector/domains/availability",
+        {
+          method: "POST",
+          body: JSON.stringify({ domain: domainName }),
+        },
+      );
+      setDomainAvailability(availability);
+    } catch (reason) {
+      setDomainError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to check this domain with Spaceship.",
+      );
+    } finally {
+      setCheckingDomain(false);
     }
   }
 
@@ -306,6 +341,76 @@ export default function TrademarkWorkspace() {
               company&apos;s history. Uploaded source files are not retained.
             </p>
           </div>
+        </form>
+
+        <form
+          onSubmit={checkDomain}
+          className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
+        >
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
+              Spaceship domain search
+            </p>
+            <h2 className="mt-2 text-2xl font-bold">Check a brand domain</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Check whether a domain is available through Spaceship. This
+              lookup does not purchase or reserve a domain and is not legal
+              trademark clearance.
+            </p>
+          </div>
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <label htmlFor="spaceship-domain" className="sr-only">
+              Domain name
+            </label>
+            <input
+              id="spaceship-domain"
+              type="text"
+              required
+              maxLength={253}
+              autoComplete="url"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="yourbrand.com"
+              value={domainName}
+              onChange={(event) => setDomainName(event.target.value)}
+              className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={checkingDomain}
+              className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              {checkingDomain ? "Checking..." : "Check availability"}
+            </button>
+          </div>
+          {domainError && (
+            <p
+              role="alert"
+              className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+            >
+              {domainError}
+            </p>
+          )}
+          {domainAvailability && (
+            <p
+              aria-live="polite"
+              className={`mt-4 rounded-xl border p-4 text-sm font-medium ${
+                domainAvailability.result === "available"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : domainAvailability.result === "taken"
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-slate-200 bg-slate-50 text-slate-700"
+              }`}
+            >
+              {domainAvailability.domain} is{" "}
+              {domainAvailability.result === "available"
+                ? "available"
+                : domainAvailability.result === "taken"
+                  ? "already registered"
+                  : "reserved"}{" "}
+              according to Spaceship.
+            </p>
+          )}
         </form>
 
         {result && (

@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     didit_status_url: str = "https://verification.didit.me/v3/session/{session_id}/"
     didit_callback_url: str = ""
 
+    spaceship_api_key: str = ""
+    spaceship_api_secret: str = ""
+    spaceship_api_base_url: str = "https://spaceship.dev/api/v1"
+
     embedding_api_key: str = ""
     embedding_api_url: str = "https://api.openai.com/v1/embeddings"
     embedding_model: str = "text-embedding-3-small"
