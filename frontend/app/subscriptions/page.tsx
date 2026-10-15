@@ -90,6 +90,8 @@ export default function SubscriptionsPage() {
 
   const [error, setError] = useState("");
 
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+
   function handleRetry() {
     setLoading(true);
     setError("");
@@ -102,7 +104,10 @@ export default function SubscriptionsPage() {
             : "Unable to load your subscriptions.",
         );
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setCurrentTime(Date.now());
+        setLoading(false);
+      });
   }
 
   useEffect(() => {
@@ -126,6 +131,7 @@ export default function SubscriptionsPage() {
       })
       .finally(() => {
         if (isMounted) {
+          setCurrentTime(Date.now());
           setLoading(false);
         }
       });
@@ -138,11 +144,16 @@ export default function SubscriptionsPage() {
 
   const activeSubscriptions = subscriptions.filter(
 
-    (subscription) =>
-
-      subscription.status === "active" ||
-
-      subscription.status === "trialing",
+    (subscription) => {
+      return (
+        currentTime !== null
+        && ["active", "trialing"].includes(subscription.status)
+        && (!subscription.current_period_end
+          || new Date(subscription.current_period_end).getTime() > currentTime)
+        && (!subscription.contract_end
+          || new Date(subscription.contract_end).getTime() > currentTime)
+      );
+    },
 
   );
 
@@ -462,7 +473,7 @@ export default function SubscriptionsPage() {
 
                       </div>
 
-                      <div className="mt-7 grid gap-4 border-t border-slate-100 pt-6 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="mt-7 grid gap-4 border-t border-slate-100 pt-6 sm:grid-cols-2 lg:grid-cols-5">
 
                         <div>
 
@@ -483,6 +494,24 @@ export default function SubscriptionsPage() {
                               /{subscription.billing_cycle}
 
                             </span>
+
+                          </p>
+
+                        </div>
+
+                        <div>
+
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+
+                            Contract End
+
+                          </p>
+
+                          <p className="mt-2 text-sm font-semibold text-slate-700">
+
+                            {subscription.contract_months
+                              ? `${subscription.contract_months} months · ${formatDate(subscription.contract_end)}`
+                              : "—"}
 
                           </p>
 

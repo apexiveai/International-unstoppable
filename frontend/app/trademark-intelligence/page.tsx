@@ -21,8 +21,7 @@ import {
 
 } from "lucide-react";
 import RequireSubscription from "@/components/RequireSubscription";
-
-const detectorUrl = process.env.NEXT_PUBLIC_TRADEMARK_DETECTOR_URL?.trim();
+import TrademarkWorkspace from "@/components/TrademarkWorkspace";
 
 const features = [
 
@@ -155,24 +154,18 @@ export default function TrademarkIntelligencePage() {
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
 
-                {detectorUrl ? <a
-
-                  href={detectorUrl}
+                <a
+                  href="#workspace"
 
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-4 text-sm font-semibold text-white transition hover:bg-slate-800"
 
                 >
 
-                  Launch Trademark Detector
+                  Start a conflict check
 
                   <ArrowRight className="h-4 w-4" />
 
-                </a> : (
-                  <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 text-sm text-amber-200">
-                    Trademark Detector is not configured. Set
-                    NEXT_PUBLIC_TRADEMARK_DETECTOR_URL in Vercel.
-                  </p>
-                )}
+                </a>
 
                 <div className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-6 py-4 text-sm font-medium text-slate-600">
 
@@ -187,6 +180,8 @@ export default function TrademarkIntelligencePage() {
           </div>
 
         </section>
+
+        <TrademarkWorkspace />
 
         {/* Metrics / Capability */}
 
@@ -397,19 +392,18 @@ export default function TrademarkIntelligencePage() {
 
               </div>
 
-              {detectorUrl ? <a
-
-                href={detectorUrl}
+              <a
+                href="#workspace"
 
                 className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-6 py-4 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
 
               >
 
-                Open Detector
+                Open Workspace
 
                 <ArrowRight className="h-4 w-4" />
 
-              </a> : null}
+              </a>
 
             </div>
 

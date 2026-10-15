@@ -732,7 +732,7 @@ INSERT INTO subscription_plans (
     billing_cycle, is_active, created_at
 )
 VALUES
-    ('trademark', 'Trademark Conflict', 'AI-powered trademark conflict detection and analysis.', 249.00, 'USD', 'monthly', TRUE, CURRENT_TIMESTAMP),
+    ('trademark', 'Trademark Conflict', 'AI-powered trademark conflict detection and analysis.', 7000000.00, 'MMK', 'monthly', TRUE, CURRENT_TIMESTAMP),
     ('workforce', 'Autonomous Workforce', 'Governed autonomous enterprise AI workforce and workflow execution.', 299.00, 'USD', 'monthly', TRUE, CURRENT_TIMESTAMP)
 ON CONFLICT (product_key) DO UPDATE
 SET name = EXCLUDED.name,

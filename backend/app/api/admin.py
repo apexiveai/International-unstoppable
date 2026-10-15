@@ -359,6 +359,7 @@ def list_admin_plan_settings(
     return [
         {
             "id": plan.id,
+            "code": plan.code,
             "product_key": plan.product_key,
             "name": plan.name,
             "description": plan.description,
@@ -381,7 +382,26 @@ def update_admin_plan_settings(
     plan = db.get(SubscriptionPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="Subscription plan not found.")
+    if (
+        plan.code == "TRADEMARK_CONFLICT"
+        and payload.currency is not None
+        and payload.currency.upper() != "MMK"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Trademark Conflict plan currency must remain MMK.",
+        )
+    if (
+        plan.code == "TRADEMARK_CONFLICT"
+        and payload.monthly_price is not None
+        and payload.monthly_price <= 0
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Trademark Conflict monthly price must be positive.",
+        )
     previous = {
+        "code": plan.code,
         "name": plan.name,
         "description": plan.description,
         "monthly_price": str(plan.monthly_price),
@@ -408,6 +428,7 @@ def update_admin_plan_settings(
             "product_key": plan.product_key,
             "previous": previous,
             "current": {
+                "code": plan.code,
                 "name": plan.name,
                 "description": plan.description,
                 "monthly_price": str(plan.monthly_price),
@@ -421,6 +442,7 @@ def update_admin_plan_settings(
     db.refresh(plan)
     return {
         "id": plan.id,
+        "code": plan.code,
         "product_key": plan.product_key,
         "name": plan.name,
         "description": plan.description,

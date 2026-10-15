@@ -4,6 +4,8 @@ export type SubscriptionPlan = {
 
   id: number;
 
+  code: string;
+
   product_key: string;
 
   name: string;
@@ -17,6 +19,8 @@ export type SubscriptionPlan = {
   billing_cycle: string;
 
   is_active: boolean;
+
+  minimum_contract_months: number | null;
 
 };
 
@@ -44,6 +48,10 @@ export type Subscription = {
 
   external_subscription_id: string | null;
 
+  contract_months: number | null;
+
+  contract_end: string | null;
+
   plan: SubscriptionPlan;
 
 };
@@ -51,6 +59,8 @@ export type Subscription = {
 export type SubscriptionAccess = {
 
   product_key: string;
+
+  entitlement_code: string;
 
   tenant_id: number;
 

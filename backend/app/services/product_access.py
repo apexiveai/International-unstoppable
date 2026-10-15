@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timezone
 
 from typing import Any
@@ -15,37 +16,29 @@ from app.models.subscription import Subscription, SubscriptionPlan
 PRODUCTS = {
 
     "trademark": {
-
         "name": "Trademark Conflict",
-
+        "entitlement_code": "TRADEMARK_CONFLICT",
+        "minimum_contract_months": 8,
         "url": "https://trademark.apexiveai.com",
-
     },
 
     "workforce": {
-
         "name": "Autonomous Workforce Agent",
-
+        "entitlement_code": "AUTONOMOUS_WORKFORCE",
         "url": "https://workforce.apexiveai.com",
-
     },
 
     "max_myanmar": {
-
         "name": "MAX-MYANMAR",
-
+        "entitlement_code": "MAX_MYANMAR",
         "url": "https://max.apexiveai.com",
-
     },
 
     "mna": {
-
         "name": "MYANMAR NATIONAL AIRLINES",
-
+        "entitlement_code": "MNA_AIRLINES",
         "url": "https://mna.apexiveai.com",
-
     },
-
 }
 
 PUBLISHED_PRODUCT_KEYS = frozenset({"trademark", "workforce"})
@@ -57,6 +50,15 @@ VERIFIED_PAYMENT = "VERIFIED"
 def utc_now() -> datetime:
 
     return datetime.now(timezone.utc)
+
+
+def add_months(value: datetime, months: int) -> datetime:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
 
 def normalize(value: Any) -> str:
 
@@ -77,8 +79,13 @@ def subscription_is_active(subscription: Any) -> bool:
     expires_at = getattr(subscription, "current_period_end", None)
     if expires_at is None:
         expires_at = getattr(subscription, "expires_at", None)
+    contract_end = getattr(subscription, "contract_end", None)
 
-    for boundary, is_start in ((starts_at, True), (expires_at, False)):
+    for boundary, is_start in (
+        (starts_at, True),
+        (expires_at, False),
+        (contract_end, False),
+    ):
         if boundary is None:
             continue
         if boundary.tzinfo is None:
@@ -104,11 +111,14 @@ def can_access_product(subscription: Any, product_key: str) -> bool:
         or not subscription_is_active(subscription)
     ):
         return False
-    subscription_product = getattr(subscription, "product_key", None)
-    if subscription_product is None:
-        plan = getattr(subscription, "plan", None)
-        subscription_product = getattr(plan, "product_key", None)
-    return subscription_product == product_key
+    product = PRODUCTS.get(product_key)
+    if product is None:
+        return False
+    plan = getattr(subscription, "plan", None)
+    subscription_code = getattr(subscription, "plan_code", None)
+    if subscription_code is None:
+        subscription_code = getattr(plan, "code", None)
+    return subscription_code == product["entitlement_code"]
 
 
 def product_is_published(product_key: str) -> bool:
@@ -151,13 +161,13 @@ def require_active_subscription(
 
         )
 
-    subscription_product = getattr(subscription, "product_key", None)
-    if subscription_product is None:
-        plan = getattr(subscription, "plan", None)
-        if plan is not None:
-            subscription_product = getattr(plan, "product_key", None)
+    product = require_product_key(product_key)
+    plan = getattr(subscription, "plan", None)
+    subscription_code = getattr(subscription, "plan_code", None)
+    if subscription_code is None:
+        subscription_code = getattr(plan, "code", None)
 
-    if subscription_product != product_key:
+    if subscription_code != product["entitlement_code"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Subscription does not belong to this product.",
@@ -198,6 +208,8 @@ def build_product_response(product_key: str) -> dict:
         "product_key": product_key,
 
         "product_name": product["name"],
+        "entitlement_code": product["entitlement_code"],
+        "minimum_contract_months": product.get("minimum_contract_months"),
 
         "url": product["url"],
 
@@ -220,7 +232,7 @@ def tenant_product_access(
         .options(joinedload(Subscription.plan))
         .where(
             Subscription.tenant_id == tenant_id,
-            SubscriptionPlan.product_key == product_key,
+            SubscriptionPlan.code == PRODUCTS[product_key]["entitlement_code"],
         )
     )
     active_subscription = db.scalar(
@@ -247,11 +259,14 @@ def tenant_product_access(
         active_subscription
         and can_access_product(active_subscription, product_key)
         and (
-            active_subscription.admin_access_reason is not None
-            or verified_payment is not None
+            verified_payment is not None
+            or (
+                product_key != "trademark"
+                and active_subscription.admin_access_reason is not None
+            )
         )
     )
-    grant = db.scalar(
+    grant = None if product_key == "trademark" else db.scalar(
         select(ProductAccessGrant)
         .where(
             ProductAccessGrant.tenant_id == tenant_id,

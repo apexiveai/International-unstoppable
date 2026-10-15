@@ -8,6 +8,8 @@ class SubscriptionPlanResponse(BaseModel):
 
     id: int
 
+    code: str
+
     product_key: str
 
     name: str
@@ -47,6 +49,10 @@ class SubscriptionResponse(BaseModel):
     start_date: datetime
 
     current_period_end: datetime | None
+
+    contract_months: int | None = None
+
+    contract_end: datetime | None = None
 
     cancelled_at: datetime | None
 

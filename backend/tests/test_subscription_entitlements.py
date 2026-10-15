@@ -21,11 +21,14 @@ from app.models import (
     SystemAuditEvent,
     Tenant,
     TenantAuditLog,
+    TrademarkConflictCheck,
     User,
 )
+from app.schemas.clone_detector import CloneDetectorResponse
 from fastapi import HTTPException
 
 from app.services.product_access import (
+    add_months,
     require_tenant_product_access,
     subscription_is_active,
     tenant_product_access,
@@ -42,6 +45,7 @@ TEST_TABLES = [
     ProductLaunchCode.__table__,
     TenantAuditLog.__table__,
     SystemAuditEvent.__table__,
+    TrademarkConflictCheck.__table__,
 ]
 
 
@@ -64,6 +68,7 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             password_hash="not-used",
             display_name="Customer A",
             tenant_id=self.tenant_a.id,
+            account_status="ACTIVE",
             is_active=True,
             is_admin=False,
             is_super_admin=False,
@@ -90,11 +95,12 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         )
         self.db.add_all((self.user, self.regular_admin, self.super_admin))
         self.plan = SubscriptionPlan(
+            code="TRADEMARK_CONFLICT",
             product_key="trademark",
             name="Trademark",
             description="Test plan",
-            monthly_price=Decimal("10.00"),
-            currency="USD",
+            monthly_price=Decimal("7000000.00"),
+            currency="MMK",
             billing_cycle="monthly",
             is_active=True,
         )
@@ -219,12 +225,12 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertFalse(subscription_is_active(expired))
         self.assertFalse(subscription_is_active(future))
 
-    def test_valid_complimentary_grant_grants_access(self):
+    def test_trademark_complimentary_grant_does_not_bypass_payment_requirement(self):
         self.add_grant()
         self.db.commit()
         access = tenant_product_access(self.db, self.tenant_a.id, "trademark")
-        self.assertTrue(access["has_access"])
-        self.assertEqual(access["source"], "enterprise_grant")
+        self.assertFalse(access["has_access"])
+        self.assertIsNone(access["source"])
 
     def test_expired_revoked_and_not_yet_started_grants_are_denied(self):
         self.add_grant(ends_delta=timedelta(seconds=-1))
@@ -264,19 +270,20 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         analyze.assert_not_called()
 
     def test_detector_accepts_entitled_upload_and_associates_trusted_user(self):
-        self.add_grant()
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
         self.db.commit()
-        result = {
-            "overall_similarity": 0.0,
-            "similarity_percent": 0.0,
-            "matching_area_count": 0,
-            "matched_points": 0,
-            "matches": [],
-            "annotated_original": [],
-            "original_page_count": 0,
-            "comparison_page_count": 0,
-            "engine": {},
-        }
+        result = CloneDetectorResponse(
+            overall_similarity=0.0,
+            similarity_percent=0.0,
+            matching_area_count=0,
+            matched_points=0,
+            matches=[],
+            annotated_original=[],
+            original_page_count=0,
+            comparison_page_count=0,
+            engine={},
+        )
         with patch("app.api.clone_detector.analyze_clone", return_value=result) as analyze:
             response = self.client.post(
                 "/api/clone-detector/analyze",
@@ -285,11 +292,15 @@ class SubscriptionEntitlementTests(unittest.TestCase):
                     "comparison": ("comparison.pdf", b"%PDF-1.4", "application/pdf"),
                 },
             )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(analyze.call_args.kwargs["original_bytes"], b"%PDF-1.4")
+        check = self.db.query(TrademarkConflictCheck).one()
+        self.assertEqual(check.tenant_id, self.tenant_a.id)
+        self.assertEqual(check.user_id, self.user.id)
 
     def test_detector_rejects_invalid_file_signatures(self):
-        self.add_grant()
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
         self.db.commit()
         with patch("app.api.clone_detector.analyze_clone") as analyze:
             response = self.client.post(
@@ -338,12 +349,18 @@ class SubscriptionEntitlementTests(unittest.TestCase):
     def test_admin_confirmation_activates_subscription_and_grants_access(self):
         response = self.client.post(
             "/api/payments/create",
-            json={"plan_id": self.plan.id, "payment_method": "card"},
+            json={
+                "plan_id": self.plan.id,
+                "payment_method": "card",
+                "accepted_contract": True,
+            },
         )
 
         self.assertEqual(response.status_code, 201, response.text)
         payment = response.json()
         self.assertEqual(payment["status"], "pending")
+        self.assertEqual(payment["amount"], "7000000.00")
+        self.assertEqual(payment["currency"], "MMK")
         self.assertIsNotNone(payment["subscription_id"])
         subscription = self.db.get(Subscription, payment["subscription_id"])
         self.assertEqual(subscription.status, "pending")
@@ -358,13 +375,142 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             self.db.get(Payment, payment["id"]).status,
             "verified",
         )
+        activated = self.db.get(Subscription, subscription.id)
+        self.assertEqual(activated.contract_months, 8)
+        self.assertEqual(
+            activated.contract_end,
+            add_months(activated.start_date, 8),
+        )
         self.assertTrue(
             tenant_product_access(self.db, self.tenant_a.id, "trademark")[
                 "has_access"
             ]
         )
 
-    def test_ordinary_admin_can_create_a_manual_subscription(self):
+    def test_trademark_request_requires_explicit_contract_acceptance(self):
+        response = self.client.post(
+            "/api/payments/create",
+            json={"plan_id": self.plan.id, "payment_method": "card"},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.db.query(Subscription).count(), 0)
+
+    def test_monthly_installment_extends_the_same_eight_month_contract(self):
+        first_payment = self.client.post(
+            "/api/payments/create",
+            json={
+                "plan_id": self.plan.id,
+                "payment_method": "card",
+                "accepted_contract": True,
+            },
+        )
+        self.assertEqual(first_payment.status_code, 201, first_payment.text)
+        subscription_id = first_payment.json()["subscription_id"]
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+        first_verification = self.client.post(
+            f"/api/admin/payments/{first_payment.json()['id']}/verify"
+        )
+        self.assertEqual(first_verification.status_code, 200, first_verification.text)
+        subscription = self.db.get(Subscription, subscription_id)
+        contract_end = subscription.contract_end
+        subscription.current_period_end = datetime.now(timezone.utc).replace(
+            tzinfo=None
+        ) - timedelta(seconds=1)
+        self.db.commit()
+
+        api.dependency_overrides[get_current_user] = lambda: self.user
+        next_payment = self.client.post(
+            "/api/payments/create",
+            json={"plan_id": self.plan.id, "payment_method": "card"},
+        )
+        self.assertEqual(next_payment.status_code, 201, next_payment.text)
+        self.assertEqual(next_payment.json()["subscription_id"], subscription_id)
+        self.assertEqual(next_payment.json()["amount"], "7000000.00")
+        self.assertEqual(next_payment.json()["currency"], "MMK")
+
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+        next_verification = self.client.post(
+            f"/api/admin/payments/{next_payment.json()['id']}/verify"
+        )
+        self.assertEqual(next_verification.status_code, 200, next_verification.text)
+        self.db.expire_all()
+        renewed = self.db.get(Subscription, subscription_id)
+        self.assertEqual(renewed.contract_months, 8)
+        self.assertEqual(renewed.contract_end, contract_end)
+        self.assertGreater(renewed.current_period_end, datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def test_trademark_history_is_tenant_scoped(self):
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
+        own_check = TrademarkConflictCheck(
+            tenant_id=self.tenant_a.id,
+            user_id=self.user.id,
+            original_filename="company-a.pdf",
+            comparison_filename="comparison.pdf",
+            result_payload='{"similarity_percent": 42.0}',
+        )
+        other_check = TrademarkConflictCheck(
+            tenant_id=self.tenant_b.id,
+            user_id=self.user.id,
+            original_filename="company-b.pdf",
+            comparison_filename="comparison.pdf",
+            result_payload='{"similarity_percent": 74.0}',
+        )
+        self.db.add_all((own_check, other_check))
+        self.db.commit()
+
+        history = self.client.get("/api/clone-detector/checks")
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertEqual(
+            [item["original_filename"] for item in history.json()["items"]],
+            ["company-a.pdf"],
+        )
+        hidden = self.client.get(
+            f"/api/clone-detector/checks/{other_check.id}"
+        )
+        self.assertEqual(hidden.status_code, 404)
+
+    def test_successful_analysis_is_saved_with_visual_result(self):
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
+        self.db.commit()
+        result = CloneDetectorResponse(
+            overall_similarity=0.5,
+            similarity_percent=50.0,
+            matching_area_count=1,
+            matched_points=12,
+            matches=[],
+            annotated_original=[],
+            original_page_count=1,
+            comparison_page_count=1,
+            engine={"name": "test"},
+        )
+        with patch(
+            "app.api.clone_detector.analyze_clone",
+            return_value=result,
+        ):
+            response = self.client.post(
+                "/api/clone-detector/analyze",
+                files={
+                    "original": (
+                        "original.pdf",
+                        b"%PDF-1.4 original",
+                        "application/pdf",
+                    ),
+                    "comparison": (
+                        "comparison.pdf",
+                        b"%PDF-1.4 comparison",
+                        "application/pdf",
+                    ),
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        history = self.client.get("/api/clone-detector/checks")
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertEqual(history.json()["total"], 1)
+        self.assertEqual(history.json()["items"][0]["similarity_percent"], 50.0)
+
+    def test_ordinary_admin_cannot_create_a_manual_trademark_subscription(self):
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin
 
         response = self.client.post(
@@ -372,26 +518,17 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             json={
                 "tenant_id": self.tenant_b.id,
                 "plan_id": self.plan.id,
-                "duration_days": 45,
+                "duration_days": 240,
                 "reason": "Approved enterprise subscription",
             },
         )
 
-        self.assertEqual(response.status_code, 201, response.text)
-        created = response.json()
-        self.assertEqual(created["tenant_id"], self.tenant_b.id)
-        self.assertEqual(created["status"], "active")
-        self.assertEqual(created["price"], "10.00")
-        self.db.expire_all()
-        self.assertTrue(
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertFalse(
             tenant_product_access(self.db, self.tenant_b.id, "trademark")[
                 "has_access"
             ]
         )
-        audit = self.db.query(TenantAuditLog).filter_by(
-            action="subscription.admin_created"
-        ).one()
-        self.assertEqual(audit.actor_user_id, self.regular_admin.id)
 
     def test_customer_cannot_create_a_manual_subscription(self):
         response = self.client.post(
@@ -422,18 +559,12 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.db.get(Subscription, subscription.id).status, "pending")
 
-    def test_ordinary_admin_can_renew_expired_subscription(self):
+    def test_trademark_subscription_cannot_be_renewed_without_payment(self):
         subscription = self.add_subscription(
             status="expired", end_delta=timedelta(days=-10)
         )
-        previous_end = subscription.current_period_end
         self.db.commit()
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin
-        expected_end = max(
-            datetime.now(timezone.utc).replace(tzinfo=None),
-            previous_end.replace(tzinfo=None),
-        ) + timedelta(days=30)
-
         response = self.client.post(
             f"/api/admin/subscriptions/{subscription.id}/renew",
             json={
@@ -442,24 +573,11 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        renewed = response.json()
-        self.assertEqual(renewed["status"], "active")
-        actual_end = datetime.fromisoformat(renewed["current_period_end"])
-        self.assertLess(
-            abs((actual_end - expected_end).total_seconds()),
-            5,
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            self.db.get(Subscription, subscription.id).status,
+            "expired",
         )
-        self.db.expire_all()
-        self.assertTrue(
-            tenant_product_access(self.db, self.tenant_a.id, "trademark")[
-                "has_access"
-            ]
-        )
-        audit = self.db.query(TenantAuditLog).filter_by(
-            action="subscription.renewed"
-        ).one()
-        self.assertEqual(audit.actor_user_id, self.regular_admin.id)
 
     def test_ordinary_admin_can_list_subscription_clients(self):
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin
@@ -475,7 +593,8 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_launch_code_is_hash_only_and_one_time(self):
-        self.add_grant()
+        subscription = self.add_subscription()
+        self.add_payment(subscription)
         raw_code = "secure-one-time-test-code-0123456789"
         code_hash = hashlib.sha256(raw_code.encode("utf8")).hexdigest()
         self.db.add(
@@ -504,7 +623,6 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertIsNotNone(stored.consumed_at)
 
     def test_expired_and_wrong_tenant_launch_codes_are_rejected(self):
-        self.add_grant()
         expired_code = "expired-code-for-test-0123456789abcdef"
         wrong_tenant_code = "wrong-tenant-code-for-test-0123456789abcdef"
         self.db.add_all(

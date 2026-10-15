@@ -193,6 +193,8 @@ export async function createPayment(
 
   paymentMethod: PaymentMethod,
 
+  acceptedContract = false,
+
 ): Promise<CreatePaymentResponse> {
 
   if (!Number.isInteger(planId) || planId <= 0) {
@@ -220,6 +222,8 @@ export async function createPayment(
         plan_id: planId,
 
         payment_method: paymentMethod,
+
+        accepted_contract: acceptedContract,
 
       }),
 

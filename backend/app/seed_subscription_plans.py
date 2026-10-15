@@ -7,23 +7,17 @@ from app.models.subscription import SubscriptionPlan
 PLANS = [
 
     {
-
+        "code": "TRADEMARK_CONFLICT",
         "product_key": "trademark",
-
         "name": "Trademark Conflict",
-
         "description": "AI-powered trademark conflict detection and analysis.",
-
-        "monthly_price": Decimal("249.00"),
-
-        "currency": "USD",
-
+        "monthly_price": Decimal("7000000.00"),
+        "currency": "MMK",
         "billing_cycle": "monthly",
-
     },
 
     {
-
+        "code": "AUTONOMOUS_WORKFORCE",
         "product_key": "workforce",
 
         "name": "Autonomous Workforce",
@@ -80,7 +74,7 @@ def seed():
             )
 
             if existing:
-
+                existing.code = data["code"]
                 existing.name = data["name"]
 
                 existing.description = data["description"]

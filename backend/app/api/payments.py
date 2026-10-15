@@ -19,7 +19,11 @@ from app.models import (
 )
 from app.models.payment import PaymentMethod
 from app.services.audit_service import write_audit_log
-from app.services.product_access import PUBLISHED_PRODUCT_KEYS
+from app.services.product_access import (
+    PUBLISHED_PRODUCT_KEYS,
+    add_months,
+    subscription_is_active,
+)
 
 router = APIRouter(prefix="/api", tags=["Payments"])
 
@@ -27,6 +31,7 @@ router = APIRouter(prefix="/api", tags=["Payments"])
 class PaymentCreateRequest(BaseModel):
     plan_id: int = Field(gt=0)
     payment_method: str = Field(min_length=2, max_length=50)
+    accepted_contract: bool = False
 
 
 class PaymentRejectRequest(BaseModel):
@@ -94,17 +99,98 @@ def create_payment(
         )
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    subscription = Subscription(
-        tenant_id=user.tenant_id,
-        plan_id=plan.id,
-        status="pending",
-        price=plan.monthly_price,
-        currency=plan.currency,
-        billing_cycle=plan.billing_cycle,
-        start_date=now,
-    )
-    db.add(subscription)
-    db.flush()
+    is_trademark_contract = plan.code == "TRADEMARK_CONFLICT"
+    if is_trademark_contract and (
+        plan.currency != "MMK" or plan.monthly_price <= 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict subscription pricing must be a positive MMK amount.",
+        )
+
+    subscription = None
+    if is_trademark_contract:
+        latest_subscription = db.scalar(
+            select(Subscription)
+            .where(
+                Subscription.tenant_id == user.tenant_id,
+                Subscription.plan_id == plan.id,
+            )
+            .order_by(desc(Subscription.created_at))
+            .limit(1)
+            .with_for_update()
+        )
+        if latest_subscription is not None:
+            contract_end = latest_subscription.contract_end
+            if contract_end is not None and contract_end.tzinfo is not None:
+                contract_end = contract_end.astimezone(timezone.utc).replace(tzinfo=None)
+            if latest_subscription.status == "pending":
+                outstanding_payment = db.scalar(
+                    select(Payment.id).where(
+                        Payment.subscription_id == latest_subscription.id,
+                        Payment.status.in_(("pending", "processing")),
+                    )
+                )
+                if outstanding_payment is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A Trademark Conflict subscription request is already awaiting payment review.",
+                    )
+                subscription = latest_subscription
+            if (
+                contract_end is not None
+                and contract_end > now
+                and latest_subscription.status == "active"
+            ):
+                period_end = latest_subscription.current_period_end
+                if period_end is not None and period_end.tzinfo is not None:
+                    period_end = period_end.astimezone(timezone.utc).replace(tzinfo=None)
+                if period_end is None or period_end > now:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="The next monthly installment is not due yet.",
+                    )
+                subscription = latest_subscription
+                outstanding_payment = db.scalar(
+                    select(Payment.id).where(
+                        Payment.subscription_id == subscription.id,
+                        Payment.status.in_(("pending", "processing")),
+                    )
+                )
+                if outstanding_payment is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A monthly Trademark Conflict installment is already awaiting payment review.",
+                    )
+            elif (
+                latest_subscription.status == "active"
+                and latest_subscription.contract_end is None
+                and subscription_is_active(latest_subscription)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="The current subscription period has not ended yet.",
+                )
+
+    if subscription is None:
+        if is_trademark_contract and not payload.accepted_contract:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="You must accept the 8-month Trademark Conflict contract before requesting a subscription.",
+            )
+        subscription = Subscription(
+            tenant_id=user.tenant_id,
+            plan_id=plan.id,
+            status="pending",
+            price=plan.monthly_price,
+            currency=plan.currency,
+            billing_cycle=plan.billing_cycle,
+            start_date=now,
+            contract_months=8 if is_trademark_contract else None,
+        )
+        db.add(subscription)
+        db.flush()
+
     payment = Payment(
         tenant_id=user.tenant_id,
         plan_id=plan.id,
@@ -112,8 +198,8 @@ def create_payment(
         provider=payment_method,
         payment_method=payment_method,
         status="pending",
-        amount=plan.monthly_price,
-        currency=plan.currency,
+        amount=subscription.price,
+        currency=subscription.currency,
         checkout_reference=f"APX-{secrets.token_urlsafe(18)}",
         created_at=now,
         updated_at=now,
@@ -230,7 +316,8 @@ def verify_payment(
             detail=f"Payment in status '{payment.status}' cannot be verified.",
         )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if payment.status != "verified":
+    is_new_verification = payment.status != "verified"
+    if is_new_verification:
         old_status = payment.status
         payment.status = "verified"
         payment.failure_reason = None
@@ -270,15 +357,22 @@ def verify_payment(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This subscription's product is not available for access.",
             )
-        another_active = db.scalar(
-            select(Subscription.id).where(
+        other_active = db.scalars(
+            select(Subscription)
+            .where(
                 Subscription.tenant_id == subscription.tenant_id,
                 Subscription.plan_id == subscription.plan_id,
                 Subscription.status == "active",
                 Subscription.id != subscription.id,
             )
+            .with_for_update()
+        ).all()
+        conflicts_with_active = (
+            any(subscription_is_active(candidate) for candidate in other_active)
+            if subscription.plan.code == "TRADEMARK_CONFLICT"
+            else bool(other_active)
         )
-        if another_active is not None:
+        if conflicts_with_active:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="An active subscription already exists for this plan.",
@@ -287,7 +381,27 @@ def verify_payment(
         previous_status = subscription.status
         subscription.status = "active"
         subscription.start_date = now
-        subscription.current_period_end = now + timedelta(days=30)
+        if subscription.plan.code == "TRADEMARK_CONFLICT":
+            if (
+                subscription.contract_months is None
+                or subscription.contract_months < 8
+                or payment.amount != subscription.price
+                or payment.currency != subscription.currency
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="The payment does not match the minimum Trademark Conflict contract.",
+                )
+            subscription.contract_end = add_months(
+                now,
+                subscription.contract_months,
+            )
+            subscription.current_period_end = min(
+                add_months(now, 1),
+                subscription.contract_end,
+            )
+        else:
+            subscription.current_period_end = now + timedelta(days=30)
         subscription.cancelled_at = None
         subscription.admin_access_reason = None
         write_audit_log(
@@ -303,6 +417,56 @@ def verify_payment(
                 "payment_id": payment.id,
                 "payment_override": False,
                 "current_period_end": subscription.current_period_end.isoformat(),
+                "contract_end": (
+                    subscription.contract_end.isoformat()
+                    if subscription.contract_end
+                    else None
+                ),
+            },
+        )
+    elif (
+        is_new_verification
+        and subscription is not None
+        and subscription.plan.code == "TRADEMARK_CONFLICT"
+        and subscription.status == "active"
+    ):
+        contract_end = subscription.contract_end
+        period_end = subscription.current_period_end
+        if contract_end is not None and contract_end.tzinfo is not None:
+            contract_end = contract_end.astimezone(timezone.utc).replace(tzinfo=None)
+        if period_end is not None and period_end.tzinfo is not None:
+            period_end = period_end.astimezone(timezone.utc).replace(tzinfo=None)
+        if (
+            contract_end is None
+            or contract_end <= now
+            or subscription.contract_months is None
+            or subscription.contract_months < 8
+            or period_end is None
+            or period_end > now
+            or payment.amount != subscription.price
+            or payment.currency != subscription.currency
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The monthly installment does not match the active Trademark Conflict contract.",
+            )
+        subscription.current_period_end = min(
+            add_months(now, 1),
+            contract_end,
+        )
+        write_audit_log(
+            db,
+            tenant_id=subscription.tenant_id,
+            actor_user_id=admin.id,
+            action="subscription.installment_verified",
+            target_type="subscription",
+            target_id=subscription.id,
+            new_value={
+                "payment_id": payment.id,
+                "amount": str(payment.amount),
+                "currency": payment.currency,
+                "current_period_end": subscription.current_period_end.isoformat(),
+                "contract_end": contract_end.isoformat(),
             },
         )
 

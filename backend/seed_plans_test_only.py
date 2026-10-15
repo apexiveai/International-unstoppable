@@ -21,14 +21,16 @@ engine = create_engine(test_url, pool_pre_ping=True)
 
 PLANS = [
     {
+        "code": "TRADEMARK_CONFLICT",
         "product_key": "trademark",
         "name": "Trademark Conflict",
         "description": "AI-powered trademark conflict detection and analysis.",
-        "monthly_price": Decimal("249.00"),
-        "currency": "USD",
+        "monthly_price": Decimal("7000000.00"),
+        "currency": "MMK",
         "billing_cycle": "monthly",
     },
     {
+        "code": "AUTONOMOUS_WORKFORCE",
         "product_key": "workforce",
         "name": "Autonomous Workforce",
         "description": "Governed autonomous enterprise AI workforce and workflow execution.",
@@ -58,6 +60,7 @@ def seed():
         }
 
         required = {
+            "code",
             "product_key",
             "name",
             "description",
@@ -88,6 +91,7 @@ def seed():
             )
 
             if existing:
+                existing.code = data["code"]
                 existing.name = data["name"]
                 existing.description = data["description"]
                 existing.monthly_price = data["monthly_price"]

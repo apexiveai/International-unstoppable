@@ -65,6 +65,7 @@ def _serialize_subscription(subscription: Subscription) -> dict:
         "external_subscription_id": subscription.external_subscription_id,
         "plan": {
             "id": plan.id,
+            "code": plan.code,
             "product_key": plan.product_key,
             "name": plan.name,
             "description": plan.description,
@@ -72,7 +73,12 @@ def _serialize_subscription(subscription: Subscription) -> dict:
             "currency": plan.currency,
             "billing_cycle": plan.billing_cycle,
             "is_active": plan.is_active,
+            "minimum_contract_months": (
+                8 if plan.code == "TRADEMARK_CONFLICT" else None
+            ),
         },
+        "contract_months": subscription.contract_months,
+        "contract_end": subscription.contract_end,
     }
 
 
@@ -99,6 +105,7 @@ def list_subscription_plans(db: Session = Depends(get_db)):
     return [
         {
             "id": plan.id,
+            "code": plan.code,
             "product_key": plan.product_key,
             "name": plan.name,
             "description": plan.description,
@@ -106,6 +113,9 @@ def list_subscription_plans(db: Session = Depends(get_db)):
             "currency": plan.currency,
             "billing_cycle": plan.billing_cycle,
             "is_active": plan.is_active,
+            "minimum_contract_months": (
+                8 if plan.code == "TRADEMARK_CONFLICT" else None
+            ),
         }
         for plan in plans
     ]
@@ -243,6 +253,11 @@ def create_product_grant(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is not published for access grants.",
+        )
+    if payload.product_key == "trademark":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict access requires a verified subscription payment.",
         )
     if db.get(Tenant, payload.tenant_id) is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
@@ -422,6 +437,7 @@ def exchange_product_launch_code(
     if (
         user is None
         or not user.is_active
+        or user.account_status != "ACTIVE"
         or user.tenant_id != launch_code.tenant_id
         or not _tenant_product_access(
             db,
@@ -675,6 +691,11 @@ def admin_create_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is not published for subscription access.",
         )
+    if plan.code == "TRADEMARK_CONFLICT":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict access must be approved through payment verification.",
+        )
 
     existing = db.scalar(
         select(Subscription.id).where(
@@ -734,6 +755,11 @@ def admin_renew_subscription(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is not published for subscription access.",
+        )
+    if subscription.plan.code == "TRADEMARK_CONFLICT":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict renewals require a verified monthly payment.",
         )
     if subscription.status not in {"active", "expired"}:
         raise HTTPException(
@@ -817,6 +843,14 @@ def activate_subscription(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a Super Admin can override verified payment requirements.",
+        )
+    if (
+        subscription.plan.code == "TRADEMARK_CONFLICT"
+        and payload.override_verified_payment
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict access cannot bypass verified payment.",
         )
 
     payment = None
@@ -906,6 +940,11 @@ def admin_update_subscription_price(
     admin: User = Depends(require_admin),
 ):
     subscription = _get_subscription(db, subscription_id)
+    if subscription.plan.code == "TRADEMARK_CONFLICT":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The signed contract price snapshot cannot be changed.",
+        )
     previous_price = str(subscription.price)
     subscription.price = payload.price
     write_audit_log(

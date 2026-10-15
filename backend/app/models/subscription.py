@@ -23,15 +23,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 class SubscriptionPlan(Base):
-
     __tablename__ = "subscription_plans"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
+    code: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     product_key: Mapped[str] = mapped_column(
-
         String(100),
-
         unique=True,
 
         nullable=False,
@@ -223,17 +220,22 @@ class Subscription(Base):
     )
 
     admin_access_reason: Mapped[str | None] = mapped_column(
-
         Text,
-
         nullable=True,
+    )
 
+    contract_months: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    contract_end: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
-
         DateTime,
-
         default=datetime.utcnow,
 
         nullable=False,

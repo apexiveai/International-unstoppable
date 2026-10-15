@@ -1,15 +1,19 @@
+import json
+
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
 )
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User
+from app.models import TrademarkConflictCheck, User
 from app.schemas.clone_detector import (
     CloneDetectorResponse,
 )
@@ -17,6 +21,7 @@ from app.services.clone_detector import (
     analyze_clone,
 )
 from app.services.product_access import require_tenant_product_access
+from app.services.audit_service import write_audit_log
 
 router = APIRouter(
 
@@ -27,6 +32,7 @@ router = APIRouter(
 )
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
+HISTORY_PAGE_SIZE = 10
 
 ALLOWED_EXTENSIONS = {
 
@@ -201,7 +207,6 @@ async def analyze_clone_documents(
     validate_file_signature(comparison.filename or "", comparison_bytes)
 
     try:
-
         result = analyze_clone(
 
             original_filename=(
@@ -242,8 +247,6 @@ async def analyze_clone_documents(
 
         )
 
-        return result
-
     except ValueError as exc:
 
         raise HTTPException(
@@ -253,27 +256,110 @@ async def analyze_clone_documents(
             detail=str(exc),
 
         ) from exc
-
     except Exception as exc:
-
         print(
-
             "[CloneDetector] Analysis failed:",
-
             repr(exc),
-
         )
-
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-
                 "Clone detection failed. "
-
                 "Please verify that both files are readable."
-
             ),
-
         ) from exc
+
+    check = TrademarkConflictCheck(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        original_filename=(original.filename or "original")[:255],
+        comparison_filename=(comparison.filename or "comparison")[:255],
+        result_payload=json.dumps(result.model_dump(mode="json")),
+    )
+    db.add(check)
+    db.flush()
+    write_audit_log(
+        db,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.id,
+        action="trademark_conflict.check_created",
+        target_type="trademark_conflict_check",
+        target_id=check.id,
+        new_value={
+            "original_filename": check.original_filename,
+            "comparison_filename": check.comparison_filename,
+            "similarity_percent": result.similarity_percent,
+        },
+    )
+    db.commit()
+    return result
+
+
+@router.get("/checks")
+def list_trademark_checks(
+    page: int = Query(default=1, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.tenant_id is None:
+        raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
+    require_tenant_product_access(db, user.tenant_id, "trademark")
+    total = db.scalar(
+        select(func.count(TrademarkConflictCheck.id)).where(
+            TrademarkConflictCheck.tenant_id == user.tenant_id
+        )
+    ) or 0
+    checks = db.scalars(
+        select(TrademarkConflictCheck)
+        .where(TrademarkConflictCheck.tenant_id == user.tenant_id)
+        .order_by(desc(TrademarkConflictCheck.created_at), desc(TrademarkConflictCheck.id))
+        .offset((page - 1) * HISTORY_PAGE_SIZE)
+        .limit(HISTORY_PAGE_SIZE)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": check.id,
+                "original_filename": check.original_filename,
+                "comparison_filename": check.comparison_filename,
+                "similarity_percent": json.loads(check.result_payload)[
+                    "similarity_percent"
+                ],
+                "created_at": check.created_at,
+            }
+            for check in checks
+        ],
+        "total": total,
+        "page": page,
+        "page_size": HISTORY_PAGE_SIZE,
+        "pages": min(100, (total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE),
+    }
+
+
+@router.get("/checks/{check_id}")
+def get_trademark_check(
+    check_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.tenant_id is None:
+        raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
+    require_tenant_product_access(db, user.tenant_id, "trademark")
+    check = db.scalar(
+        select(TrademarkConflictCheck).where(
+            TrademarkConflictCheck.id == check_id,
+            TrademarkConflictCheck.tenant_id == user.tenant_id,
+        )
+    )
+    if check is None:
+        raise HTTPException(status_code=404, detail="Trademark Conflict check not found.")
+    return {
+        "id": check.id,
+        "original_filename": check.original_filename,
+        "comparison_filename": check.comparison_filename,
+        "similarity_percent": json.loads(check.result_payload)[
+            "similarity_percent"
+        ],
+        "created_at": check.created_at,
+        "result": json.loads(check.result_payload),
+    }

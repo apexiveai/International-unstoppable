@@ -26,6 +26,8 @@ export default function PricingPage() {
 
   const [error, setError] = useState("");
 
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+
   const router = useRouter();
 
   useEffect(() => {
@@ -64,6 +66,8 @@ export default function PricingPage() {
 
       } finally {
 
+        setCurrentTime(Date.now());
+
         setLoading(false);
 
       }
@@ -91,14 +95,17 @@ function handleSubscribe(plan: {
 }
 
   function hasActiveSubscription(productKey: string) {
+    if (currentTime === null) return false;
 
     return subscriptions.some(
 
       (subscription) =>
-
-        subscription.plan.product_key === productKey &&
-
-        ["active", "trialing"].includes(subscription.status),
+        subscription.plan.product_key === productKey
+        && ["active", "trialing"].includes(subscription.status)
+        && (!subscription.current_period_end
+          || new Date(subscription.current_period_end).getTime() > currentTime)
+        && (!subscription.contract_end
+          || new Date(subscription.contract_end).getTime() > currentTime)
 
     );
 
@@ -200,6 +207,16 @@ function handleSubscribe(plan: {
           {plans.map((plan) => {
 
             const active = hasActiveSubscription(plan.product_key);
+            const monthlyPrice = Number(plan.monthly_price);
+            const formattedMonthlyPrice = new Intl.NumberFormat("en-US", {
+              maximumFractionDigits: 2,
+            }).format(monthlyPrice);
+            const contractCommitment =
+              plan.minimum_contract_months === null
+                ? null
+                : new Intl.NumberFormat("en-US", {
+                    maximumFractionDigits: 2,
+                  }).format(monthlyPrice * plan.minimum_contract_months);
 
             return (
 
@@ -246,7 +263,7 @@ function handleSubscribe(plan: {
 
                   <span className="text-4xl font-bold tracking-tight text-[#172033]">
 
-                    ${Number(plan.monthly_price).toLocaleString()}
+                    {plan.currency} {formattedMonthlyPrice}
 
                   </span>
 
@@ -257,6 +274,14 @@ function handleSubscribe(plan: {
                   </span>
 
                 </div>
+
+                {plan.minimum_contract_months !== null && (
+                  <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                    Minimum {plan.minimum_contract_months}-month contract,
+                    billed monthly. Total contract commitment: {plan.currency}{" "}
+                    {contractCommitment}.
+                  </div>
+                )}
 
                 <div className="mt-5 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
 
@@ -298,11 +323,7 @@ function handleSubscribe(plan: {
 
                     >
 
-                      {`Subscribe for $${Number(
-
-                        plan.monthly_price,
-
-                      ).toLocaleString()}/month`}
+                      {`Subscribe for ${plan.currency} ${formattedMonthlyPrice}/month`}
 
                     </button>
 

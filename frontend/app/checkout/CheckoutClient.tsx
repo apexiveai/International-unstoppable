@@ -145,6 +145,8 @@ export default function CheckoutClient() {
 
     useState<PaymentMethod>("card");
 
+  const [contractAccepted, setContractAccepted] = useState(false);
+
   const [payment, setPayment] =
 
     useState<CreatePaymentResponse | null>(null);
@@ -322,6 +324,15 @@ export default function CheckoutClient() {
 
     }
 
+    if (
+      selectedPlan.minimum_contract_months !== null
+      && selectedPlan.minimum_contract_months !== undefined
+      && !contractAccepted
+    ) {
+      setError("Accept the minimum contract terms before continuing.");
+      return;
+    }
+
     setLoading(true);
 
     setError("");
@@ -333,6 +344,8 @@ export default function CheckoutClient() {
         selectedPlan.id,
 
         selectedMethod,
+
+        contractAccepted,
 
       );
 
@@ -565,8 +578,25 @@ export default function CheckoutClient() {
 
                   {payment.currency} {payment.amount}
                 </span>
-
               </div>
+              {selectedPlan.minimum_contract_months !== null && (
+                <div className="rounded-xl border border-cyan-400/10 bg-cyan-400/5 p-4 text-sm">
+                  <p className="font-semibold text-cyan-100">
+                    {selectedPlan.minimum_contract_months}-month contract
+                  </p>
+                  <p className="mt-1 text-slate-300">
+                    Monthly installment: {payment.currency} {payment.amount}
+                    <br />
+                    Total commitment: {payment.currency}{" "}
+                    {new Intl.NumberFormat("en-US", {
+                      maximumFractionDigits: 2,
+                    }).format(
+                      Number(payment.amount)
+                        * selectedPlan.minimum_contract_months,
+                    )}
+                  </p>
+                </div>
+              )}
 
               <div className="flex justify-between gap-4">
 
@@ -896,13 +926,50 @@ export default function CheckoutClient() {
 
               </div>
 
-              <button
+              {selectedPlan.minimum_contract_months !== null && (
+                <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
+                  <p className="text-sm font-semibold text-cyan-100">
+                    Minimum {selectedPlan.minimum_contract_months}-month contract
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    Billed monthly at {selectedPlan.currency} {displayPrice}.
+                    Total commitment: {selectedPlan.currency}{" "}
+                    {new Intl.NumberFormat("en-US", {
+                      maximumFractionDigits: 2,
+                    }).format(
+                      Number(selectedPlan.monthly_price)
+                        * selectedPlan.minimum_contract_months,
+                    )}.
+                  </p>
+                  <label className="mt-4 flex items-start gap-3 text-sm leading-6 text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={contractAccepted}
+                      onChange={(event) =>
+                        setContractAccepted(event.target.checked)
+                      }
+                      className="mt-1 h-4 w-4 rounded border-slate-500 accent-cyan-400"
+                    />
+                    <span>
+                      I agree to the 8-month minimum contract and monthly
+                      installment commitment.
+                    </span>
+                  </label>
+                </div>
+              )}
 
+              <button
                 type="button"
 
                 onClick={handleContinue}
 
-                disabled={loading}
+                disabled={
+                  loading
+                  || (
+                    selectedPlan.minimum_contract_months !== null
+                    && !contractAccepted
+                  )
+                }
 
                 className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3.5 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
 
