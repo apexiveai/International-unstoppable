@@ -474,6 +474,34 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         response = self.client.get("/api/admin/accounts")
         self.assertEqual(response.status_code, 403)
 
+    def test_ordinary_admin_can_approve_pending_account_in_another_tenant(self):
+        pending_user = User(
+            username="customer-b-pending",
+            email="customer-b-pending@example.test",
+            password_hash="not-used",
+            display_name="Customer B Pending",
+            tenant_id=self.tenant_b.id,
+            is_active=False,
+            is_admin=False,
+            role="USER",
+            account_status="PENDING",
+        )
+        self.db.add(pending_user)
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        pending_users = self.client.get("/api/admin/users/pending")
+        self.assertEqual(pending_users.status_code, 200, pending_users.text)
+        self.assertIn(pending_user.id, [user["id"] for user in pending_users.json()])
+
+        response = self.client.post(f"/api/admin/users/{pending_user.id}/approve")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(pending_user)
+        self.assertEqual(pending_user.account_status, "ACTIVE")
+        self.assertTrue(pending_user.is_active)
+        self.assertEqual(pending_user.approved_by, self.regular_admin.id)
+
     def test_customer_cannot_cancel_subscription(self):
         subscription = self.add_subscription()
         self.db.commit()

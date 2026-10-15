@@ -8,6 +8,7 @@ export type AdminClient = {
   display_name: string;
   company_name: string | null;
   is_active: boolean;
+  account_status: string;
   is_admin: boolean;
   created_at: string;
 };
@@ -400,6 +401,13 @@ export function setAdminClientStatus(clientId: number, isActive: boolean) {
     method: "PATCH",
     body: JSON.stringify({ is_active: isActive }),
   });
+}
+
+export function approveAdminClient(clientId: number) {
+  return adminRequest<{ user_id: number; account_status: string }>(
+    `/api/admin/users/${clientId}/approve`,
+    { method: "POST" },
+  );
 }
 
 export function resetAdminClientPassword(clientId: number) {

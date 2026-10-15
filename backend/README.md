@@ -13,13 +13,17 @@ FROM users;
 
 Platform-wide administration requires an authenticated user with both
 `users.is_admin` and `users.is_super_admin` set. A normal administrator is not
-implicitly promoted. Customer identity and tenant scope come from the
+implicitly promoted. Any administrator can review and approve pending customer
+accounts across tenants; approval records the acting administrator and tenant
+in the audit trail. Customer identity and tenant scope come from the
 authenticated server-side user record, not request-supplied tenant or role IDs.
 
 The normal billing flow is:
 
 1. An authenticated client creates a pending payment with
-   `POST /api/payments/create` (`plan_id` and `payment_method`).
+   `POST /api/payments/create` (`plan_id` and `payment_method`). Bank and mobile
+   wallet payments can be reviewed manually, including payments made outside
+   the application.
 2. An administrator verifies or rejects it under
    `/api/admin/payments/{payment_id}`.
 3. Only a verified payment can be used to activate its linked subscription

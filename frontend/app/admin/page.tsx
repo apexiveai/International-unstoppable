@@ -11,6 +11,7 @@ import {
   createAdminClient,
   createAdminProductGrant,
   createAdminSubscription,
+  approveAdminClient,
   getAdminAccounts,
   getAdminDashboard,
   getAdminPlanSettings,
@@ -587,12 +588,18 @@ function AdminDashboard() {
                           <tr key={client.id}>
                             <td className="py-3"><p className="font-semibold text-slate-100">{client.display_name}</p><p className="text-slate-400">{client.email}</p></td>
                             <td className="text-slate-300">{client.company_name ?? "—"}</td>
-                            <td><StatusBadge status={client.is_active ? "active" : "disabled"} /></td>
+                            <td><StatusBadge status={client.account_status.toLowerCase()} /></td>
                             <td className="text-slate-400">{new Date(client.created_at).toLocaleDateString()}</td>
                             <td className="space-x-3 text-right">
                               <button onClick={() => { setSelectedClient(client); scrollToSection("client-details"); }} className="font-semibold text-cyan-300 hover:text-cyan-100">Details</button>
-                              <button disabled={busy} onClick={() => void resetClientPassword(client)} className="font-semibold text-amber-300 disabled:opacity-50">Reset password</button>
-                              <button disabled={busy} onClick={() => void runAction(() => setAdminClientStatus(client.id, !client.is_active), client.is_active ? "Client disabled." : "Client enabled.")} className="font-semibold text-slate-300 disabled:opacity-50">{client.is_active ? "Disable" : "Enable"}</button>
+                              {client.account_status === "PENDING" ? (
+                                <button disabled={busy} onClick={() => void runAction(() => approveAdminClient(client.id), "Client account approved.")} className="font-semibold text-emerald-300 disabled:opacity-50">Approve account</button>
+                              ) : (
+                                <>
+                                  <button disabled={busy} onClick={() => void resetClientPassword(client)} className="font-semibold text-amber-300 disabled:opacity-50">Reset password</button>
+                                  <button disabled={busy} onClick={() => void runAction(() => setAdminClientStatus(client.id, !client.is_active), client.is_active ? "Client disabled." : "Client enabled.")} className="font-semibold text-slate-300 disabled:opacity-50">{client.is_active ? "Disable" : "Enable"}</button>
+                                </>
+                              )}
                             </td>
                           </tr>
                         ))}

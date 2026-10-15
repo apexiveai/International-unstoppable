@@ -47,6 +47,7 @@ def _serialize_client(user: User, company_name: str | None = None) -> dict:
         "display_name": user.display_name,
         "company_name": company_name,
         "is_active": user.is_active,
+        "account_status": user.account_status,
         "is_admin": user.is_admin,
         "created_at": user.created_at,
     }

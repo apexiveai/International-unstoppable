@@ -7,7 +7,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import generate_temporary_password, hash_password
-from app.core.authorization import require_super_admin as require_authenticated_admin
+from app.core.authorization import (
+    require_subscription_operator,
+    require_super_admin as require_authenticated_admin,
+)
 from app.database import get_db
 from app.models import (
     AuditLog,
@@ -91,7 +94,7 @@ def _serialize_admin(account: User) -> dict:
 
 @router.get("/users/pending")
 def list_pending_users(
-    admin: User = Depends(require_authenticated_admin),
+    admin: User = Depends(require_subscription_operator),
     db: Session = Depends(get_db),
 ):
     users = db.scalars(
@@ -120,7 +123,7 @@ def list_pending_users(
 @router.post("/users/{user_id}/approve")
 def approve_user(
     user_id: int,
-    admin: User = Depends(require_authenticated_admin),
+    admin: User = Depends(require_subscription_operator),
     db: Session = Depends(get_db),
 ):
     user = db.get(User, user_id)
