@@ -262,6 +262,8 @@ class Subscription(Base):
 
     )
 
+    tenant = relationship("Tenant")
+
 class BillingEvent(Base):
 
     __tablename__ = "billing_events"

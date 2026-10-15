@@ -24,14 +24,14 @@ The normal billing flow is:
    `/api/admin/payments/{payment_id}`.
 3. Only a verified payment can be used to activate its linked subscription
    through `/api/admin/subscriptions/{subscription_id}/activate`.
-4. An Admin can directly create an access-granting subscription with
-   `POST /api/admin/subscriptions`, extend an active or expired subscription
-   with `POST /api/admin/subscriptions/{subscription_id}/renew`, and cancel
-   subscriptions through `/api/admin/subscriptions/{subscription_id}/cancel`.
-   These manual actions require an approval reason, grant access only for the
-   published product period, and are recorded in tenant audit logs. Customers
-   can submit payment requests and view subscriptions but cannot create,
-   extend, or cancel subscriptions directly.
+4. An Admin can submit a manual subscription request with
+   `POST /api/admin/subscriptions`; it remains pending until a Super Admin
+   approves it through
+   `POST /api/admin/subscriptions/{subscription_id}/approve-manual`. Requests
+   require a reason and do not bypass verified payment for Trademark Conflict.
+   Admins can extend eligible subscriptions and cancel them with a recorded
+   reason. Support accounts have read-only subscription access. Customers can
+   submit payment requests and view subscriptions but cannot administer them.
 5. The client checks access with
    `GET /api/subscriptions/access/{product_key}`. Paid access requires a
    matching active subscription, valid dates, and a verified payment scoped to
@@ -55,6 +55,15 @@ The normal billing flow is:
    grant lifecycle changes, code lifecycle changes, and bootstrap actions are
    recorded in `system_audit_events`, exposed at
    `GET /api/admin/system-audit-logs`.
+
+The subscription administration page provides tenant/plan/status filters,
+subscription KPIs, details and audit history, bounded bulk extension/cancellation,
+CSV/XLSX exports, and a verified-payment revenue CSV. Monthly revenue is
+reported separately per currency. To deliver 7-day and 3-day expiry reminders,
+schedule `python send_subscription_reminders.py` to run daily from the
+`backend` directory. The job records in-app notifications before attempting
+email delivery; configure SMTP settings to enable email. Delivery failures are
+logged and included in the command summary.
 
 The Detector API checks entitlement before parsing uploads. The separate
 Detector service verifies the bearer token and tenant against this API, scopes

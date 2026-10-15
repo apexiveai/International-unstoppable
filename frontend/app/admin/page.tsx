@@ -246,6 +246,7 @@ function AdminDashboard() {
         username: String(form.get("username") ?? ""),
         email: String(form.get("email") ?? ""),
         display_name: String(form.get("display_name") ?? ""),
+        role: String(form.get("role") ?? "ADMIN") === "SUPPORT" ? "SUPPORT" : "ADMIN",
       });
       setTemporaryPassword(result.temporary_password);
       setNotice(`Created administrator account for ${result.admin.email}. Save the temporary password now.`);
@@ -399,7 +400,7 @@ function AdminDashboard() {
         duration_days: durationDays,
         reason,
       });
-      setNotice("Subscription created and activated.");
+      setNotice("Manual subscription request submitted for Super Admin approval.");
       formElement.reset();
       await load();
     } catch (reason) {
@@ -443,6 +444,22 @@ function AdminDashboard() {
           reason: reason.trim(),
         }),
       `Subscription #${subscription.id} activated with a Super Admin override.`,
+    );
+  }
+
+  async function cancelSubscription(subscription: AdminSubscription) {
+    if (!window.confirm(`Cancel subscription #${subscription.id}?`)) return;
+    const reason = window.prompt("Enter a reason for this cancellation:");
+    if (!reason?.trim() || reason.trim().length < 3) {
+      setError("A cancellation reason of at least 3 characters is required.");
+      return;
+    }
+    if (!window.confirm("This is the final confirmation. Cancel this subscription now?")) {
+      return;
+    }
+    await runAction(
+      () => updateAdminSubscription(subscription.id, "cancel", { reason: reason.trim() }),
+      `Subscription #${subscription.id} cancelled.`,
     );
   }
 
@@ -712,12 +729,13 @@ function AdminDashboard() {
                   </div>
                   <div className="mt-5 overflow-x-auto">
                     <table className="w-full min-w-[680px] text-left text-sm">
-                      <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Administrator</th><th>Username</th><th>Status</th><th>Created</th><th className="text-right">Actions</th></tr></thead>
+                      <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Account</th><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th className="text-right">Actions</th></tr></thead>
                       <tbody className="divide-y divide-slate-800">
                         {accounts.map((account) => (
                           <tr key={account.id}>
                             <td className="py-3"><p className="font-semibold text-slate-100">{account.display_name}</p><p className="text-slate-400">{account.email}</p></td>
                             <td className="text-slate-300">{account.username}</td>
+                            <td className="text-slate-300">{account.role}</td>
                             <td><StatusBadge status={account.is_active ? "active" : "disabled"} /></td>
                             <td className="text-slate-400">{new Date(account.created_at).toLocaleDateString()}</td>
                             <td className="space-x-3 text-right">
@@ -726,7 +744,7 @@ function AdminDashboard() {
                             </td>
                           </tr>
                         ))}
-                        {!accounts.length && <tr><td colSpan={5} className="py-5 text-slate-400">No administrator accounts found.</td></tr>}
+                        {!accounts.length && <tr><td colSpan={6} className="py-5 text-slate-400">No administrator accounts found.</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -735,10 +753,14 @@ function AdminDashboard() {
                 <section id="create-admin" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <h2 className="text-lg font-bold text-white">Create Admin</h2>
                   <p className="mt-1 text-sm text-slate-400">The new administrator receives a one-time temporary password.</p>
-                  <form onSubmit={submitAdmin} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <form onSubmit={submitAdmin} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                     <input aria-label="Admin username" name="username" required minLength={3} maxLength={50} placeholder="Username" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
                     <input aria-label="Admin email" name="email" type="email" required placeholder="Email" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
                     <input aria-label="Admin display name" name="display_name" required minLength={2} maxLength={100} placeholder="Display name" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
+                    <select aria-label="Administrator role" name="role" defaultValue="ADMIN" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white">
+                      <option value="ADMIN">Admin — manage subscriptions</option>
+                      <option value="SUPPORT">Support — view only</option>
+                    </select>
                     <button disabled={busy} className="rounded-lg bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-50">Create administrator</button>
                   </form>
                 </section>
@@ -750,7 +772,7 @@ function AdminDashboard() {
                       <button onClick={() => setSelectedAdmin(null)} className="text-sm font-semibold text-slate-400 hover:text-white">Close</button>
                     </div>
                     <dl className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                      {[["Name", selectedAdmin.display_name], ["Username", selectedAdmin.username], ["Email", selectedAdmin.email], ["Status", selectedAdmin.is_active ? "Active" : "Disabled"], ["Account type", "Administrator"], ["Created", new Date(selectedAdmin.created_at).toLocaleString()]].map(([label, value]) => (
+                      {[["Name", selectedAdmin.display_name], ["Username", selectedAdmin.username], ["Email", selectedAdmin.email], ["Status", selectedAdmin.is_active ? "Active" : "Disabled"], ["Account type", selectedAdmin.role], ["Created", new Date(selectedAdmin.created_at).toLocaleString()]].map(([label, value]) => (
                         <div key={label}><dt className="text-xs uppercase tracking-wider text-slate-500">{label}</dt><dd className="mt-1 text-sm text-slate-100">{value}</dd></div>
                       ))}
                     </dl>
@@ -815,7 +837,7 @@ function AdminDashboard() {
                               )}
                               {subscription.status === "active" && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "suspend"), `Subscription #${subscription.id} suspended.`)} className="font-semibold text-amber-300 disabled:opacity-50">Suspend</button>}
                               {["active", "expired"].includes(subscription.status) && <button disabled={busy} onClick={() => void renewSubscription(subscription)} className="font-semibold text-emerald-300 disabled:opacity-50">Extend</button>}
-                              {["pending", "active", "suspended"].includes(subscription.status) && <button disabled={busy} onClick={() => void runAction(() => updateAdminSubscription(subscription.id, "cancel"), `Subscription #${subscription.id} cancelled.`)} className="font-semibold text-rose-300 disabled:opacity-50">Cancel</button>}
+                              {["pending", "active", "suspended"].includes(subscription.status) && <button disabled={busy} onClick={() => void cancelSubscription(subscription)} className="font-semibold text-rose-300 disabled:opacity-50">Cancel</button>}
                               </div>
                             </td>
                           </tr>

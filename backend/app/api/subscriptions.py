@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -9,11 +11,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import desc, select, update
+from fastapi.responses import Response
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import create_access_token, get_current_user
-from app.core.authorization import require_admin
+from app.core.authorization import require_admin, require_subscription_operator
 from app.core.authorization import require_super_admin
 from app.core.config import settings
 from app.database import get_db
@@ -29,6 +32,10 @@ from app.models import (
     User,
 )
 from app.services.audit_service import write_audit_log, write_system_audit_event
+from app.services.subscription_notifications import (
+    queue_tenant_notification,
+    send_tenant_subscription_email,
+)
 from app.services.product_access import (
     PUBLISHED_PRODUCT_KEYS,
     build_product_response,
@@ -54,6 +61,7 @@ def _serialize_subscription(subscription: Subscription) -> dict:
     return {
         "id": subscription.id,
         "tenant_id": subscription.tenant_id,
+        "tenant_name": subscription.tenant.name if subscription.tenant else None,
         "plan_id": subscription.plan_id,
         "status": subscription.status,
         "price": str(subscription.price),
@@ -62,6 +70,7 @@ def _serialize_subscription(subscription: Subscription) -> dict:
         "start_date": subscription.start_date,
         "current_period_end": subscription.current_period_end,
         "cancelled_at": subscription.cancelled_at,
+        "admin_access_reason": subscription.admin_access_reason,
         "external_subscription_id": subscription.external_subscription_id,
         "plan": {
             "id": plan.id,
@@ -80,6 +89,20 @@ def _serialize_subscription(subscription: Subscription) -> dict:
         "contract_months": subscription.contract_months,
         "contract_end": subscription.contract_end,
     }
+
+
+def _admin_subscription_status(
+    subscription: Subscription, now: datetime | None = None
+) -> str:
+    if subscription.status == "active":
+        now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+        period_end = subscription.current_period_end
+        if period_end is not None:
+            if period_end.tzinfo is not None:
+                period_end = period_end.astimezone(timezone.utc).replace(tzinfo=None)
+            if period_end <= now:
+                return "expired"
+    return subscription.status
 
 
 def _get_subscription(db: Session, subscription_id: int) -> Subscription:
@@ -571,23 +594,126 @@ def list_product_launch_codes(
 def admin_list_subscriptions(
     tenant_id: int | None = None,
     subscription_status: str | None = Query(default=None, alias="status"),
+    search: str | None = Query(default=None, max_length=200),
+    plan_id: int | None = Query(default=None, gt=0),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    query = select(Subscription).options(joinedload(Subscription.plan))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    query = (
+        select(Subscription)
+        .join(Tenant, Tenant.id == Subscription.tenant_id)
+        .options(joinedload(Subscription.plan), joinedload(Subscription.tenant))
+    )
     if tenant_id is not None:
         query = query.where(Subscription.tenant_id == tenant_id)
-    if subscription_status:
+    if plan_id is not None:
+        query = query.where(Subscription.plan_id == plan_id)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
         query = query.where(
-            Subscription.status == subscription_status.strip().lower()
+            or_(
+                Tenant.name.ilike(term),
+                Tenant.slug.ilike(term),
+            )
         )
+    if subscription_status:
+        requested = subscription_status.strip().lower()
+        if requested == "active":
+            query = query.where(
+                Subscription.status == "active",
+                or_(
+                    Subscription.current_period_end.is_(None),
+                    Subscription.current_period_end > now,
+                ),
+            )
+        elif requested == "expired":
+            query = query.where(
+                or_(
+                    Subscription.status == "expired",
+                    (
+                        (Subscription.status == "active")
+                        & (Subscription.current_period_end <= now)
+                    ),
+                )
+            )
+        else:
+            query = query.where(Subscription.status == requested)
+    count = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     subscriptions = db.scalars(
-        query.order_by(desc(Subscription.created_at)).limit(limit)
+        query.order_by(desc(Subscription.created_at)).limit(limit).offset(offset)
     ).all()
     return {
-        "items": [_serialize_subscription(item) for item in subscriptions],
-        "count": len(subscriptions),
+        "items": [
+            {**_serialize_subscription(item), "status": _admin_subscription_status(item, now)}
+            for item in subscriptions
+        ],
+        "count": count,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/admin/subscription-statistics")
+def admin_subscription_statistics(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    active_count = db.scalar(
+        select(func.count(Subscription.id)).where(
+            Subscription.status == "active",
+            or_(
+                Subscription.current_period_end.is_(None),
+                Subscription.current_period_end > now,
+            ),
+        )
+    ) or 0
+    expired_count = db.scalar(
+        select(func.count(Subscription.id)).where(
+            or_(
+                Subscription.status == "expired",
+                (
+                    (Subscription.status == "active")
+                    & (Subscription.current_period_end <= now)
+                ),
+            )
+        )
+    ) or 0
+    pending_payments = db.scalar(
+        select(func.count(Payment.id)).where(
+            Payment.status.in_(("pending", "processing"))
+        )
+    ) or 0
+    next_month = (
+        datetime(month_start.year + 1, 1, 1)
+        if month_start.month == 12
+        else datetime(month_start.year, month_start.month + 1, 1)
+    )
+    revenue_by_currency = db.execute(
+        select(Payment.currency, func.sum(Payment.amount))
+        .where(
+            Payment.status == "verified",
+            Payment.paid_at >= month_start,
+            Payment.paid_at < next_month,
+        )
+        .group_by(Payment.currency)
+        .order_by(Payment.currency)
+    ).all()
+    return {
+        "active_subscriptions": active_count,
+        "expired_subscriptions": expired_count,
+        "monthly_revenue": (
+            str(revenue_by_currency[0][1]) if len(revenue_by_currency) == 1 else None
+        ),
+        "currency": revenue_by_currency[0][0] if len(revenue_by_currency) == 1 else None,
+        "monthly_revenue_by_currency": {
+            currency: str(amount) for currency, amount in revenue_by_currency
+        },
+        "pending_payment_requests": pending_payments,
     }
 
 
@@ -598,6 +724,274 @@ def admin_get_subscription(
     _admin: User = Depends(require_admin),
 ):
     return _serialize_subscription(_get_subscription(db, subscription_id))
+
+
+@router.get("/admin/subscriptions/{subscription_id}/details")
+def admin_subscription_details(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    subscription = _get_subscription(db, subscription_id)
+    payments = db.scalars(
+        select(Payment)
+        .where(
+            Payment.tenant_id == subscription.tenant_id,
+            or_(
+                Payment.subscription_id == subscription.id,
+                (
+                    (Payment.subscription_id.is_(None))
+                    & (Payment.plan_id == subscription.plan_id)
+                ),
+            ),
+        )
+        .order_by(desc(Payment.created_at))
+    ).all()
+    audit_rows = db.execute(
+        select(TenantAuditLog, User.display_name, User.username)
+        .outerjoin(User, User.id == TenantAuditLog.actor_id)
+        .where(
+            TenantAuditLog.entity_type == "subscription",
+            TenantAuditLog.entity_id == str(subscription.id),
+        )
+        .order_by(desc(TenantAuditLog.created_at))
+        .limit(200)
+    ).all()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return {
+        **_serialize_subscription(subscription),
+        "remaining_days": _subscription_remaining_days(subscription, now),
+        "payment_history": [
+            {
+                "id": payment.id,
+                "status": payment.status,
+                "amount": str(payment.amount),
+                "currency": payment.currency,
+                "payment_method": payment.payment_method,
+                "paid_at": payment.paid_at,
+                "created_at": payment.created_at,
+            }
+            for payment in payments
+        ],
+        "activity_log": [
+            {
+                "id": log.id,
+                "actor_user_id": log.actor_id,
+                "actor_name": display_name or username or "System",
+                "action": log.action,
+                "reason": log.new_value or log.details,
+                "created_at": log.created_at,
+                "old_value": log.old_value,
+                "new_value": log.new_value,
+            }
+            for log, display_name, username in audit_rows
+        ],
+    }
+
+
+@router.post("/admin/subscription-bulk-actions")
+def admin_bulk_subscriptions(
+    payload: BulkSubscriptionRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_subscription_operator),
+):
+    subscriptions = db.scalars(
+        select(Subscription)
+        .options(joinedload(Subscription.plan))
+        .where(Subscription.id.in_(payload.subscription_ids))
+        .with_for_update()
+    ).all()
+    if len(subscriptions) != len(payload.subscription_ids):
+        raise HTTPException(status_code=404, detail="One or more subscriptions were not found.")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if payload.action == "extend":
+        for subscription in subscriptions:
+            if subscription.status not in {"active", "expired"}:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Subscription #{subscription.id} cannot be extended.",
+                )
+            if (
+                subscription.plan.code == "TRADEMARK_CONFLICT"
+                or not product_is_published(subscription.plan.product_key)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Subscription #{subscription.id} requires payment-based renewal.",
+                )
+        for subscription in subscriptions:
+            old_end = subscription.current_period_end
+            if old_end is not None and old_end.tzinfo is not None:
+                old_end = old_end.astimezone(timezone.utc).replace(tzinfo=None)
+            start = max(now, old_end) if old_end is not None else now
+            previous_status = subscription.status
+            subscription.status = "active"
+            subscription.start_date = now if previous_status == "expired" else subscription.start_date
+            subscription.current_period_end = start + timedelta(days=payload.duration_days or 30)
+            subscription.cancelled_at = None
+            write_audit_log(
+                db,
+                tenant_id=subscription.tenant_id,
+                actor_user_id=admin.id,
+                action="subscription.bulk_extended",
+                target_type="subscription",
+                target_id=subscription.id,
+                old_value={"status": previous_status, "current_period_end": old_end},
+                new_value={
+                    "status": "active",
+                    "current_period_end": subscription.current_period_end,
+                    "duration_days": payload.duration_days,
+                    "reason": payload.reason.strip(),
+                },
+            )
+    else:
+        for subscription in subscriptions:
+            if subscription.status not in {"pending", "active", "suspended"}:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Subscription #{subscription.id} cannot be cancelled.",
+                )
+        for subscription in subscriptions:
+            previous_status = subscription.status
+            subscription.status = "cancelled"
+            subscription.cancelled_at = now
+            write_audit_log(
+                db,
+                tenant_id=subscription.tenant_id,
+                actor_user_id=admin.id,
+                action="subscription.bulk_cancelled",
+                target_type="subscription",
+                target_id=subscription.id,
+                old_value={"status": previous_status},
+                new_value={"status": "cancelled", "reason": payload.reason.strip()},
+            )
+    db.commit()
+    return {
+        "action": payload.action,
+        "count": len(subscriptions),
+        "subscription_ids": payload.subscription_ids,
+    }
+
+
+@router.get("/admin/subscriptions/export/csv")
+def admin_export_subscriptions_csv(
+    search: str | None = None,
+    subscription_status: str | None = Query(default=None, alias="status"),
+    plan_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_subscription_operator),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        ["ID", "Tenant", "Plan", "Status", "Price", "Currency", "Start date", "End date", "Remaining days"]
+    )
+    for item in _subscription_export_rows(
+        db, search=search, subscription_status=subscription_status, plan_id=plan_id
+    ):
+        writer.writerow(
+            [
+                item.id,
+                item.tenant.name if item.tenant else item.tenant_id,
+                item.plan.name,
+                item.status,
+                item.price,
+                item.currency,
+                item.start_date.isoformat() if item.start_date else "",
+                item.current_period_end.isoformat() if item.current_period_end else "",
+                _subscription_remaining_days(item, now),
+            ]
+        )
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="subscriptions.csv"'},
+    )
+
+
+@router.get("/admin/subscriptions/export/xlsx")
+def admin_export_subscriptions_xlsx(
+    search: str | None = None,
+    subscription_status: str | None = Query(default=None, alias="status"),
+    plan_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_subscription_operator),
+):
+    import xlsxwriter
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    worksheet = workbook.add_worksheet("Subscriptions")
+    headers = [
+        "ID", "Tenant", "Plan", "Status", "Price", "Currency",
+        "Start date", "End date", "Remaining days",
+    ]
+    for column, header in enumerate(headers):
+        worksheet.write(0, column, header)
+    for row, item in enumerate(
+        _subscription_export_rows(
+            db, search=search, subscription_status=subscription_status, plan_id=plan_id
+        ),
+        start=1,
+    ):
+        values = [
+            item.id,
+            item.tenant.name if item.tenant else str(item.tenant_id),
+            item.plan.name,
+            item.status,
+            float(item.price),
+            item.currency,
+            item.start_date.isoformat() if item.start_date else "",
+            item.current_period_end.isoformat() if item.current_period_end else "",
+            _subscription_remaining_days(item, now),
+        ]
+        for column, value in enumerate(values):
+            worksheet.write(row, column, value)
+    workbook.close()
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="subscriptions.xlsx"'},
+    )
+
+
+@router.get("/admin/revenue-report.csv")
+def admin_revenue_report_csv(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_subscription_operator),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    start = datetime(year or now.year, month or now.month, 1)
+    next_month = (
+        datetime(start.year + 1, 1, 1)
+        if start.month == 12
+        else datetime(start.year, start.month + 1, 1)
+    )
+    totals = db.execute(
+        select(Payment.currency, func.sum(Payment.amount), func.count(Payment.id))
+        .where(
+            Payment.status == "verified",
+            Payment.paid_at >= start,
+            Payment.paid_at < next_month,
+        )
+        .group_by(Payment.currency)
+        .order_by(Payment.currency)
+    ).all()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["Period", "Currency", "Revenue", "Verified payments"])
+    for currency, amount, count in totals:
+        writer.writerow([start.strftime("%Y-%m"), currency, amount, count])
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="revenue-report.csv"'},
+    )
 
 
 class ActivateSubscriptionRequest(BaseModel):
@@ -646,6 +1040,83 @@ class AdminSubscriptionRenewRequest(BaseModel):
         return self
 
 
+class AdminSubscriptionCancelRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reason(self):
+        if len(self.reason.strip()) < 3:
+            raise ValueError("A cancellation reason is required.")
+        return self
+
+
+class BulkSubscriptionRequest(BaseModel):
+    action: Literal["extend", "cancel"]
+    subscription_ids: list[int] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=3, max_length=2000)
+    duration_days: int | None = Field(default=None, ge=1, le=3660)
+
+    @model_validator(mode="after")
+    def validate_action_details(self):
+        if len(self.reason.strip()) < 3:
+            raise ValueError("A reason is required.")
+        if self.action == "extend" and self.duration_days is None:
+            raise ValueError("Duration is required for bulk extension.")
+        if len(set(self.subscription_ids)) != len(self.subscription_ids):
+            raise ValueError("Subscription IDs must be unique.")
+        return self
+
+
+def _subscription_remaining_days(subscription: Subscription, now: datetime) -> int | None:
+    period_end = subscription.current_period_end
+    if period_end is None:
+        return None
+    if period_end.tzinfo is not None:
+        period_end = period_end.astimezone(timezone.utc).replace(tzinfo=None)
+    return max(0, (period_end.date() - now.date()).days)
+
+
+def _subscription_export_rows(
+    db: Session,
+    *,
+    search: str | None,
+    subscription_status: str | None,
+    plan_id: int | None,
+):
+    query = (
+        select(Subscription)
+        .join(Tenant, Tenant.id == Subscription.tenant_id)
+        .options(joinedload(Subscription.plan), joinedload(Subscription.tenant))
+    )
+    if plan_id is not None:
+        query = query.where(Subscription.plan_id == plan_id)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.where(or_(Tenant.name.ilike(term), Tenant.slug.ilike(term)))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if subscription_status == "active":
+        query = query.where(
+            Subscription.status == "active",
+            or_(
+                Subscription.current_period_end.is_(None),
+                Subscription.current_period_end > now,
+            ),
+        )
+    elif subscription_status == "expired":
+        query = query.where(
+            or_(
+                Subscription.status == "expired",
+                (
+                    (Subscription.status == "active")
+                    & (Subscription.current_period_end <= now)
+                ),
+            )
+        )
+    elif subscription_status:
+        query = query.where(Subscription.status == subscription_status)
+    return db.scalars(query.order_by(desc(Subscription.created_at))).all()
+
+
 @router.get("/admin/subscription-clients")
 def admin_list_subscription_clients(
     db: Session = Depends(get_db),
@@ -674,7 +1145,7 @@ def admin_list_subscription_clients(
 def admin_create_subscription(
     payload: AdminSubscriptionCreateRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     tenant = db.get(Tenant, payload.tenant_id)
     if tenant is None:
@@ -714,7 +1185,7 @@ def admin_create_subscription(
     subscription = Subscription(
         tenant_id=tenant.id,
         plan_id=plan.id,
-        status="active",
+        status="pending",
         price=plan.monthly_price,
         currency=plan.currency,
         billing_cycle=plan.billing_cycle,
@@ -732,6 +1203,7 @@ def admin_create_subscription(
         target_type="subscription",
         target_id=subscription.id,
         new_value={
+            "status": "pending",
             "plan_id": plan.id,
             "duration_days": payload.duration_days,
             "reason": payload.reason.strip(),
@@ -742,12 +1214,83 @@ def admin_create_subscription(
     return _serialize_subscription(_get_subscription(db, subscription.id))
 
 
+@router.post("/admin/subscriptions/{subscription_id}/approve-manual")
+def approve_manual_subscription(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_super_admin),
+):
+    subscription = _get_subscription(db, subscription_id)
+    if subscription.status != "pending" or not subscription.admin_access_reason:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending manual subscriptions can be approved.",
+        )
+    if subscription.plan.code == "TRADEMARK_CONFLICT":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trademark Conflict access requires verified payment.",
+        )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if subscription.current_period_end is None or subscription.current_period_end <= now:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The manual subscription request has expired.",
+        )
+    existing = db.scalar(
+        select(Subscription.id).where(
+            Subscription.tenant_id == subscription.tenant_id,
+            Subscription.plan_id == subscription.plan_id,
+            Subscription.status == "active",
+            Subscription.id != subscription.id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active subscription already exists for this plan.",
+        )
+    subscription.status = "active"
+    write_audit_log(
+        db,
+        tenant_id=subscription.tenant_id,
+        actor_user_id=admin.id,
+        action="subscription.manual_approved",
+        target_type="subscription",
+        target_id=subscription.id,
+        old_value={"status": "pending"},
+        new_value={
+            "status": "active",
+            "reason": subscription.admin_access_reason,
+            "current_period_end": subscription.current_period_end.isoformat(),
+        },
+    )
+    queue_tenant_notification(
+        db,
+        tenant_id=subscription.tenant_id,
+        actor_id=admin.id,
+        notification_type="subscription_activated",
+        title="Subscription activated",
+        message=f"{subscription.plan.name} access has been activated.",
+        subscription_id=subscription.id,
+    )
+    db.commit()
+    db.refresh(subscription)
+    send_tenant_subscription_email(
+        db,
+        tenant_id=subscription.tenant_id,
+        subject="Your subscription has been activated",
+        message=f"Your {subscription.plan.name} subscription is now active.",
+    )
+    return _serialize_subscription(_get_subscription(db, subscription.id))
+
+
 @router.post("/admin/subscriptions/{subscription_id}/renew")
 def admin_renew_subscription(
     subscription_id: int,
     payload: AdminSubscriptionRenewRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     require_product_key(subscription.plan.product_key)
@@ -823,7 +1366,7 @@ def activate_subscription(
     subscription_id: int,
     payload: ActivateSubscriptionRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     require_product_key(subscription.plan.product_key)
@@ -927,8 +1470,23 @@ def activate_subscription(
             "current_period_end": subscription.current_period_end.isoformat(),
         },
     )
+    queue_tenant_notification(
+        db,
+        tenant_id=subscription.tenant_id,
+        actor_id=admin.id,
+        notification_type="subscription_activated",
+        title="Subscription activated",
+        message=f"{subscription.plan.name} access has been activated.",
+        subscription_id=subscription.id,
+    )
     db.commit()
     db.refresh(subscription)
+    send_tenant_subscription_email(
+        db,
+        tenant_id=subscription.tenant_id,
+        subject="Your subscription has been activated",
+        message=f"Your {subscription.plan.name} subscription is now active.",
+    )
     return _serialize_subscription(subscription)
 
 
@@ -937,7 +1495,7 @@ def admin_update_subscription_price(
     subscription_id: int,
     payload: AdminSubscriptionPriceRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     if subscription.plan.code == "TRADEMARK_CONFLICT":
@@ -968,6 +1526,7 @@ def _admin_change_status(
     subscription: Subscription,
     new_status: str,
     action: str,
+    reason: str | None = None,
 ) -> dict:
     old_status = subscription.status
     subscription.status = new_status
@@ -981,7 +1540,7 @@ def _admin_change_status(
         target_type="subscription",
         target_id=subscription.id,
         old_value={"status": old_status},
-        new_value={"status": new_status},
+        new_value={"status": new_status, **({"reason": reason} if reason else {})},
     )
     db.commit()
     db.refresh(subscription)
@@ -992,7 +1551,7 @@ def _admin_change_status(
 def suspend_subscription(
     subscription_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     if subscription.status != "active":
@@ -1008,8 +1567,9 @@ def suspend_subscription(
 @router.post("/admin/subscriptions/{subscription_id}/cancel")
 def admin_cancel_subscription(
     subscription_id: int,
+    payload: AdminSubscriptionCancelRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     if subscription.status == "cancelled":
@@ -1020,7 +1580,12 @@ def admin_cancel_subscription(
             detail="This subscription cannot be cancelled.",
         )
     return _admin_change_status(
-        db, admin, subscription, "cancelled", "subscription.cancelled"
+        db,
+        admin,
+        subscription,
+        "cancelled",
+        "subscription.cancelled",
+        payload.reason.strip(),
     )
 
 
@@ -1028,7 +1593,7 @@ def admin_cancel_subscription(
 def expire_subscription(
     subscription_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     subscription = _get_subscription(db, subscription_id)
     if subscription.status == "expired":

@@ -28,3 +28,12 @@ def require_super_admin(current_user=Depends(require_authenticated_user)):
             detail="Super administrator access required.",
         )
     return current_user
+
+
+def require_subscription_operator(current_user=Depends(require_admin)):
+    if current_user.role.strip().upper() == "SUPPORT" and not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Subscription changes require Admin access.",
+        )
+    return current_user

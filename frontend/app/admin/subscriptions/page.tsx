@@ -6,9 +6,14 @@ import { useRouter } from "next/navigation";
 
 import RequireAuth from "@/components/RequireAuth";
 import {
+  approveAdminManualSubscription,
+  bulkUpdateAdminSubscriptions,
   createAdminSubscription,
+  downloadAdminReport,
+  getAdminSubscriptionDetails,
   getAdminSubscriptionClients,
   getAdminSubscriptionPayments,
+  getAdminSubscriptionStatistics,
   getAdminSubscriptions,
   rejectAdminPayment,
   renewAdminSubscription,
@@ -17,6 +22,8 @@ import {
   type AdminPayment,
   type AdminSubscription,
   type AdminSubscriptionClient,
+  type AdminSubscriptionDetails,
+  type AdminSubscriptionStatistics,
 } from "@/lib/admin";
 import {
   getSubscriptionPlans,
@@ -39,24 +46,39 @@ function AdminSubscriptionsDashboard() {
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([]);
   const [payments, setPayments] = useState<AdminPayment[]>([]);
+  const [statistics, setStatistics] = useState<AdminSubscriptionStatistics | null>(null);
+  const [details, setDetails] = useState<AdminSubscriptionDetails | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [planFilter, setPlanFilter] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isSupport, setIsSupport] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
-    const [clientResult, planResult, subscriptionResult, paymentResult] =
+    const [clientResult, planResult, subscriptionResult, paymentResult, stats] =
       await Promise.all([
         getAdminSubscriptionClients(),
         getSubscriptionPlans(),
-        getAdminSubscriptions(),
+        getAdminSubscriptions({
+          search,
+          status: statusFilter,
+          planId: planFilter ? Number(planFilter) : undefined,
+        }),
         getAdminSubscriptionPayments(),
+        getAdminSubscriptionStatistics(),
       ]);
     setClients(clientResult.items);
     setPlans(planResult);
     setSubscriptions(subscriptionResult.items);
     setPayments(paymentResult.items);
-  }, []);
+    setStatistics(stats);
+    setSelectedIds([]);
+  }, [planFilter, search, statusFilter]);
 
   useEffect(() => {
     let mounted = true;
@@ -64,9 +86,15 @@ function AdminSubscriptionsDashboard() {
     let isAdmin = false;
     try {
       const user = rawUser
-        ? (JSON.parse(rawUser) as { is_admin?: boolean })
+        ? (JSON.parse(rawUser) as {
+            is_admin?: boolean;
+            is_super_admin?: boolean;
+            role?: string;
+          })
         : null;
       isAdmin = user?.is_admin === true;
+      setIsSuperAdmin(user?.is_super_admin === true);
+      setIsSupport(user?.role?.toUpperCase() === "SUPPORT");
     } catch {
       isAdmin = false;
     }
@@ -95,6 +123,7 @@ function AdminSubscriptionsDashboard() {
       mounted = false;
     };
   }, [load, router]);
+  const canManage = !isSupport;
 
   async function runAction(action: () => Promise<unknown>, message: string) {
     setBusy(true);
@@ -149,7 +178,7 @@ function AdminSubscriptionsDashboard() {
         duration_days: durationDays,
         reason,
       });
-      setNotice("Subscription created and activated.");
+      setNotice("Manual subscription request submitted for Super Admin approval.");
       formElement.reset();
       await load();
     } catch (reason) {
@@ -199,6 +228,88 @@ function AdminSubscriptionsDashboard() {
     );
   }
 
+  async function cancelSubscription(subscription: AdminSubscription) {
+    if (!window.confirm(`Cancel subscription #${subscription.id}?`)) return;
+    const reason = window.prompt("Enter a reason for this cancellation:");
+    if (!reason?.trim() || reason.trim().length < 3) {
+      setError("A cancellation reason of at least 3 characters is required.");
+      return;
+    }
+    if (!window.confirm("This is the final confirmation. Cancel this subscription now?")) {
+      return;
+    }
+    await runAction(
+      () => updateAdminSubscription(subscription.id, "cancel", { reason: reason.trim() }),
+      `Subscription #${subscription.id} cancelled.`,
+    );
+  }
+
+  async function openDetails(subscriptionId: number) {
+    setError("");
+    try {
+      setDetails(await getAdminSubscriptionDetails(subscriptionId));
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to load subscription details.",
+      );
+    }
+  }
+
+  async function runBulkAction(action: "extend" | "cancel") {
+    if (!selectedIds.length) return;
+    let durationDays: number | undefined;
+    if (action === "extend") {
+      const value = window.prompt("Number of days to add:", "30");
+      if (value === null) return;
+      durationDays = Number(value);
+      if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3660) {
+        setError("Enter a whole number of days between 1 and 3660.");
+        return;
+      }
+    } else if (!window.confirm(`Cancel ${selectedIds.length} selected subscriptions?`)) {
+      return;
+    }
+    const reason = window.prompt(
+      action === "cancel"
+        ? "Confirm cancellation by entering the reason:"
+        : "Enter the reason for this bulk extension:",
+    );
+    if (!reason?.trim() || reason.trim().length < 3) {
+      setError("A reason of at least 3 characters is required.");
+      return;
+    }
+    if (
+      action === "cancel" &&
+      !window.confirm("This is the final confirmation. Cancel the selected subscriptions now?")
+    ) {
+      return;
+    }
+    await runAction(
+      () =>
+        bulkUpdateAdminSubscriptions({
+          action,
+          subscription_ids: selectedIds,
+          reason: reason.trim(),
+          ...(durationDays ? { duration_days: durationDays } : {}),
+        }),
+      `${selectedIds.length} subscriptions ${action === "extend" ? "extended" : "cancelled"}.`,
+    );
+  }
+
+  function exportPath(path: string) {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set("search", search.trim());
+    if (statusFilter) params.set("status", statusFilter);
+    if (planFilter) params.set("plan_id", planFilter);
+    return `${path}${params.size ? `?${params.toString()}` : ""}`;
+  }
+
+  const allVisibleSelected =
+    subscriptions.length > 0 &&
+    subscriptions.every((subscription) => selectedIds.includes(subscription.id));
+
   return (
     <main className="min-h-screen bg-slate-950 px-5 py-10 text-white sm:px-8">
       <div className="mx-auto max-w-7xl">
@@ -229,10 +340,35 @@ function AdminSubscriptionsDashboard() {
           <p className="mt-8 text-sm text-slate-400">Loading subscriptions…</p>
         ) : (
           <div className="mt-8 space-y-8">
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                ["Active subscriptions", statistics?.active_subscriptions ?? 0],
+                ["Expired subscriptions", statistics?.expired_subscriptions ?? 0],
+                [
+                  "Monthly revenue",
+                  statistics
+                    ? Object.entries(statistics.monthly_revenue_by_currency)
+                        .map(([currency, amount]) => `${amount} ${currency}`)
+                        .join(" · ") || "0"
+                    : "—",
+                ],
+                ["Pending payments", statistics?.pending_payment_requests ?? 0],
+              ].map(([label, value]) => (
+                <article
+                  key={label}
+                  className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5"
+                >
+                  <p className="text-sm text-slate-400">{label}</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+                </article>
+              ))}
+            </section>
+
+            {canManage && (
             <section className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
               <h2 className="text-lg font-semibold">Create manual subscription</h2>
               <p className="mt-1 text-sm text-slate-400">
-                This activates access immediately without recording a payment.
+                Requests remain pending until a Super Admin approves them. Trademark access always requires verified payment.
               </p>
               <form
                 onSubmit={(event) => void submitSubscription(event)}
@@ -302,19 +438,125 @@ function AdminSubscriptionsDashboard() {
                 </button>
               </form>
             </section>
+            )}
 
             <section className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
-              <h2 className="text-lg font-semibold">Subscriptions</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">Subscriptions</h2>
+                {canManage && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      disabled={busy || !selectedIds.length}
+                      onClick={() => void runBulkAction("extend")}
+                      className="rounded-lg border border-cyan-700 px-3 py-2 text-xs font-semibold text-cyan-200 disabled:opacity-40"
+                    >
+                      Bulk extend ({selectedIds.length})
+                    </button>
+                    <button
+                      disabled={busy || !selectedIds.length}
+                      onClick={() => void runBulkAction("cancel")}
+                      className="rounded-lg border border-rose-700 px-3 py-2 text-xs font-semibold text-rose-200 disabled:opacity-40"
+                    >
+                      Bulk cancel ({selectedIds.length})
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void runAction(
+                          () => downloadAdminReport(exportPath("/api/admin/subscriptions/export/csv"), "subscriptions.csv"),
+                          "CSV export downloaded.",
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 disabled:opacity-40"
+                    >
+                      CSV
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void runAction(
+                          () => downloadAdminReport(exportPath("/api/admin/subscriptions/export/xlsx"), "subscriptions.xlsx"),
+                          "Excel export downloaded.",
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 disabled:opacity-40"
+                    >
+                      Excel
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void runAction(
+                          () => downloadAdminReport("/api/admin/revenue-report.csv", "revenue-report.csv"),
+                          "Revenue report downloaded.",
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 disabled:opacity-40"
+                    >
+                      Revenue report
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search tenant name"
+                  aria-label="Search tenant name"
+                  className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-sm text-white"
+                />
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  aria-label="Filter by status"
+                  className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-sm text-white"
+                >
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="expired">Expired</option>
+                  <option value="pending">Pending</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select
+                  value={planFilter}
+                  onChange={(event) => setPlanFilter(event.target.value)}
+                  aria-label="Filter by plan"
+                  className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-sm text-white"
+                >
+                  <option value="">All plans</option>
+                  {plans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>{plan.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[800px] text-left text-sm">
                   <thead className="text-xs uppercase text-slate-500">
                     <tr>
+                      {canManage && (
+                        <th className="py-2">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all visible subscriptions"
+                            checked={allVisibleSelected}
+                            onChange={(event) =>
+                              setSelectedIds(
+                                event.target.checked
+                                  ? subscriptions.map((item) => item.id)
+                                  : [],
+                              )
+                            }
+                          />
+                        </th>
+                      )}
                       <th className="py-2">ID</th>
                       <th>Tenant</th>
                       <th>Plan</th>
                       <th>Amount</th>
                       <th>Status</th>
                       <th>Period ends</th>
+                      <th>Days left</th>
                       <th className="text-right">Actions</th>
                     </tr>
                   </thead>
@@ -327,8 +569,24 @@ function AdminSubscriptionsDashboard() {
                       );
                       return (
                         <tr key={subscription.id}>
+                          {canManage && (
+                            <td className="py-3">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select subscription ${subscription.id}`}
+                                checked={selectedIds.includes(subscription.id)}
+                                onChange={(event) =>
+                                  setSelectedIds((current) =>
+                                    event.target.checked
+                                      ? [...current, subscription.id]
+                                      : current.filter((id) => id !== subscription.id),
+                                  )
+                                }
+                              />
+                            </td>
+                          )}
                           <td className="py-3">#{subscription.id}</td>
-                          <td>{subscription.tenant_id}</td>
+                          <td>{subscription.tenant_name || `Tenant #${subscription.tenant_id}`}</td>
                           <td>{subscription.plan.name}</td>
                           <td>{subscription.price} {subscription.currency}</td>
                           <td>
@@ -341,8 +599,42 @@ function AdminSubscriptionsDashboard() {
                               ? new Date(subscription.current_period_end).toLocaleDateString()
                               : "—"}
                           </td>
+                          <td>
+                            {subscription.current_period_end
+                              ? Math.max(
+                                  0,
+                                  Math.ceil(
+                                    (new Date(subscription.current_period_end).getTime() - Date.now()) /
+                                      (1000 * 60 * 60 * 24),
+                                  ),
+                                )
+                              : "—"}
+                          </td>
                           <td className="space-x-3 text-right">
-                            {subscription.status === "pending" && hasVerifiedPayment && (
+                            <button
+                              disabled={busy}
+                              onClick={() => void openDetails(subscription.id)}
+                              className="font-semibold text-slate-200 disabled:opacity-50"
+                            >
+                              Details
+                            </button>
+                            {isSuperAdmin &&
+                              subscription.status === "pending" &&
+                              subscription.admin_access_reason && (
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void runAction(
+                                      () => approveAdminManualSubscription(subscription.id),
+                                      `Manual subscription #${subscription.id} approved.`,
+                                    )
+                                  }
+                                  className="font-semibold text-emerald-300 disabled:opacity-50"
+                                >
+                                  Approve manual
+                                </button>
+                              )}
+                            {canManage && subscription.status === "pending" && hasVerifiedPayment && (
                               <button
                                 disabled={busy}
                                 onClick={() =>
@@ -356,7 +648,7 @@ function AdminSubscriptionsDashboard() {
                                 Activate
                               </button>
                             )}
-                            {["active", "expired"].includes(subscription.status) && (
+                            {canManage && ["active", "expired"].includes(subscription.status) && (
                               <button
                                 disabled={busy}
                                 onClick={() => void extendSubscription(subscription)}
@@ -365,17 +657,10 @@ function AdminSubscriptionsDashboard() {
                                 Extend
                               </button>
                             )}
-                            {["pending", "active", "suspended"].includes(subscription.status) && (
+                            {canManage && ["pending", "active", "suspended"].includes(subscription.status) && (
                               <button
                                 disabled={busy}
-                                onClick={() => {
-                                  if (window.confirm(`Cancel subscription #${subscription.id}?`)) {
-                                    void runAction(
-                                      () => updateAdminSubscription(subscription.id, "cancel"),
-                                      `Subscription #${subscription.id} cancelled.`,
-                                    );
-                                  }
-                                }}
+                                onClick={() => void cancelSubscription(subscription)}
                                 className="font-semibold text-rose-300 disabled:opacity-50"
                               >
                                 Cancel
@@ -386,7 +671,7 @@ function AdminSubscriptionsDashboard() {
                       );
                     })}
                     {!subscriptions.length && (
-                      <tr><td colSpan={7} className="py-5 text-slate-400">No subscriptions found.</td></tr>
+                      <tr><td colSpan={canManage ? 9 : 8} className="py-5 text-slate-400">No subscriptions found.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -428,7 +713,7 @@ function AdminSubscriptionsDashboard() {
                           </span>
                         </td>
                         <td className="space-x-3 text-right">
-                          {["pending", "processing"].includes(payment.status) && (
+                          {canManage && ["pending", "processing"].includes(payment.status) && (
                             <>
                               <button
                                 disabled={busy}
@@ -464,6 +749,85 @@ function AdminSubscriptionsDashboard() {
           </div>
         )}
       </div>
+      {details && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDetails(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="subscription-details-title"
+            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-700 bg-[#0d1726] p-6 text-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="subscription-details-title" className="text-xl font-semibold">
+                  Subscription #{details.id}
+                </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  {details.tenant_name || `Tenant #${details.tenant_id}`} · {details.plan.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setDetails(null)}
+                aria-label="Close details"
+                className="rounded-lg border border-slate-700 px-3 py-1 text-sm"
+              >
+                Close
+              </button>
+            </div>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-3">
+              <div><dt className="text-xs text-slate-400">Start date</dt><dd className="mt-1">{new Date(details.start_date).toLocaleString()}</dd></div>
+              <div><dt className="text-xs text-slate-400">End date</dt><dd className="mt-1">{details.current_period_end ? new Date(details.current_period_end).toLocaleString() : "No end date"}</dd></div>
+              <div><dt className="text-xs text-slate-400">Remaining days</dt><dd className="mt-1">{details.remaining_days ?? "—"}</dd></div>
+              {details.admin_access_reason && (
+                <div className="sm:col-span-3">
+                  <dt className="text-xs text-slate-400">Manual access reason</dt>
+                  <dd className="mt-1">{details.admin_access_reason}</dd>
+                </div>
+              )}
+            </dl>
+            <h3 className="mt-7 font-semibold">Payment history</h3>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[500px] text-left text-sm">
+                <thead className="text-xs text-slate-400"><tr><th className="py-2">Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+                <tbody className="divide-y divide-slate-800">
+                  {details.payment_history.map((payment) => (
+                    <tr key={payment.id}>
+                      <td className="py-2">{new Date(payment.paid_at || payment.created_at).toLocaleString()}</td>
+                      <td>{payment.amount} {payment.currency}</td>
+                      <td>{payment.payment_method}</td>
+                      <td>{payment.status}</td>
+                    </tr>
+                  ))}
+                  {!details.payment_history.length && <tr><td colSpan={4} className="py-3 text-slate-400">No payments recorded.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <h3 className="mt-7 font-semibold">Activity log</h3>
+            <ol className="mt-2 space-y-3">
+              {details.activity_log.map((entry) => (
+                <li key={entry.id} className="rounded-lg border border-slate-800 p-3 text-sm">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <span>{entry.actor_name} · {entry.action}</span>
+                    <time className="text-xs text-slate-400">{new Date(entry.created_at).toLocaleString()}</time>
+                  </div>
+                  {entry.reason && (
+                    <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-xs text-slate-300">
+                      {entry.reason}
+                    </pre>
+                  )}
+                </li>
+              ))}
+              {!details.activity_log.length && <li className="text-sm text-slate-400">No activity recorded.</li>}
+            </ol>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -12,7 +12,7 @@ export const siteNavigationGroups = [
   {
     label: "Solutions",
     links: [
-      { label: "Trademark Intelligence", href: "/trademark-intelligence" },
+      { label: "Trademark Conflict", href: "/trademark-intelligence" },
       { label: "Workforce", href: "/workforce" },
       { label: "Phase 1", href: "/phase-1" },
     ],

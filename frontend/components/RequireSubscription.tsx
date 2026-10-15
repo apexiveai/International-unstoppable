@@ -30,7 +30,7 @@ type RequireSubscriptionProps = {
 
 const productNames: Record<string, string> = {
 
-  trademark: "Trademark Intelligence",
+  trademark: "Trademark Conflict",
   workforce: "Autonomous Workforce",
   max_myanmar: "MAX-MYANMAR",
   mna: "MYANMAR NATIONAL AIRLINES",

@@ -9,7 +9,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.core.authorization import require_admin
+from app.core.authorization import require_admin, require_subscription_operator
 from app.database import get_db
 from app.models import (
     Payment,
@@ -19,6 +19,10 @@ from app.models import (
 )
 from app.models.payment import PaymentMethod
 from app.services.audit_service import write_audit_log
+from app.services.subscription_notifications import (
+    queue_tenant_notification,
+    send_tenant_subscription_email,
+)
 from app.services.product_access import (
     PUBLISHED_PRODUCT_KEYS,
     add_months,
@@ -303,7 +307,7 @@ def admin_get_payment(
 def verify_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     payment = _get_payment(db, payment_id)
     if payment.status != "verified" and payment.status in {
@@ -317,6 +321,7 @@ def verify_payment(
         )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     is_new_verification = payment.status != "verified"
+    subscription_activated = False
     if is_new_verification:
         old_status = payment.status
         payment.status = "verified"
@@ -380,6 +385,7 @@ def verify_payment(
 
         previous_status = subscription.status
         subscription.status = "active"
+        subscription_activated = True
         subscription.start_date = now
         if subscription.plan.code == "TRADEMARK_CONFLICT":
             if (
@@ -472,6 +478,40 @@ def verify_payment(
 
     db.commit()
     db.refresh(payment)
+    if is_new_verification:
+        queue_tenant_notification(
+            db,
+            tenant_id=payment.tenant_id,
+            actor_id=admin.id,
+            notification_type="payment_approved",
+            title="Payment approved",
+            message=f"Payment #{payment.id} has been approved.",
+            subscription_id=payment.subscription_id,
+        )
+        db.commit()
+        send_tenant_subscription_email(
+            db,
+            tenant_id=payment.tenant_id,
+            subject="Your payment has been approved",
+            message=f"Payment #{payment.id} has been approved.",
+        )
+    if subscription_activated and subscription is not None:
+        queue_tenant_notification(
+            db,
+            tenant_id=subscription.tenant_id,
+            actor_id=admin.id,
+            notification_type="subscription_activated",
+            title="Subscription activated",
+            message=f"{subscription.plan.name} access has been activated.",
+            subscription_id=subscription.id,
+        )
+        db.commit()
+        send_tenant_subscription_email(
+            db,
+            tenant_id=subscription.tenant_id,
+            subject="Your subscription has been activated",
+            message=f"Your {subscription.plan.name} subscription is now active.",
+        )
     return _serialize_payment(payment)
 
 
@@ -480,7 +520,7 @@ def reject_payment(
     payment_id: int,
     payload: PaymentRejectRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     payment = _get_payment(db, payment_id)
     if payment.status == "verified":
@@ -534,7 +574,7 @@ def reject_payment(
 def refund_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_subscription_operator),
 ):
     payment = _get_payment(db, payment_id)
     if payment.status != "verified":

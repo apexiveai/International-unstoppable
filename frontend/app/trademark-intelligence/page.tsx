@@ -1,122 +1,52 @@
 "use client";
 
 import {
-
   ArrowRight,
-
-
   FileSearch,
-
-  FolderSearch,
-
-  Gavel,
-
   History,
-
   ScanSearch,
-
   ShieldCheck,
-
   Upload,
-
 } from "lucide-react";
 import RequireSubscription from "@/components/RequireSubscription";
 import TrademarkProductLaunchButton from "@/components/TrademarkProductLaunchButton";
 import TrademarkWorkspace from "@/components/TrademarkWorkspace";
 
 const features = [
-
   {
-
     icon: Upload,
-
-    title: "Document Intake",
-
+    title: "Two-file upload",
     description:
-
-      "Upload government trademark journals and client trademark lists for investigation.",
-
+      "Compare PDF, JPG, JPEG, PNG, or WEBP trademark files up to 20 MB each.",
   },
-
   {
-
     icon: ScanSearch,
-
-    title: "Conflict Detection",
-
+    title: "Visual similarity screening",
     description:
-
-      "Identify application, company, phone and trademark conflicts across submitted records.",
-
+      "Find visually matching regions between the two submitted documents.",
   },
-
   {
-
-    icon: FolderSearch,
-
-    title: "Case Management",
-
-    description:
-
-      "Group detected signals into investigation cases for structured review.",
-
-  },
-
-  {
-
-    icon: Gavel,
-
-    title: "Human Review",
-
-    description:
-
-      "Confirm or reject detected conflicts and preserve reviewer comments.",
-
-  },
-
-  {
-
     icon: FileSearch,
-
-    title: "Evidence & Reports",
-
+    title: "Evidence and export",
     description:
-
-      "Review source evidence and generate a formal conflict investigation report.",
-
+      "Review annotated original pages, inspect match scores, and download a JSON report.",
   },
-
   {
-
     icon: History,
-
-    title: "Report History",
-
+    title: "Company check history",
     description:
-
-      "Keep generated investigation reports available for later reference.",
-
+      "Reopen previous checks saved to your company account.",
   },
-
 ];
 
 const workflow = [
-
-  "Upload",
-
-  "Detect",
-
-  "Group into Cases",
-
-  "Review",
-
-  "Confirm / Reject",
-
-  "Report",
-
+  "Upload two files",
+  "Compare visually",
+  "Review evidence",
+  "Export report",
 ];
 
-export default function TrademarkIntelligencePage() {
+export default function TrademarkConflictPage() {
   return (
     <RequireSubscription productKey="trademark">
       <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -139,17 +69,15 @@ export default function TrademarkIntelligencePage() {
 
               <h1 className="mt-7 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
 
-                Trademark Intelligence
+                Trademark Conflict
 
               </h1>
 
               <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600">
 
-                Investigate potential trademark conflicts across government
-
-                trademark journals and client trademark records with a
-
-                structured AI-assisted workflow.
+                Screen two trademark files for visual similarity, review
+                annotated match evidence, and keep checks organized in your
+                company history.
 
               </p>
 
@@ -162,7 +90,7 @@ export default function TrademarkIntelligencePage() {
 
                 >
 
-                  Start a conflict check
+                  Start a visual check
 
                   <ArrowRight className="h-4 w-4" />
 
@@ -170,7 +98,7 @@ export default function TrademarkIntelligencePage() {
 
                 <div className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-6 py-4 text-sm font-medium text-slate-600">
 
-                  Trademark Conflict Investigation
+                  Pairwise visual comparison
 
                 </div>
 
@@ -192,41 +120,33 @@ export default function TrademarkIntelligencePage() {
 
             <MetricCard
 
-              label="Government Journal"
-
-              value="PDF"
-
-              description="Source document"
+              label="Supported files"
+              value="PDF / Images"
+              description="PDF, JPG, PNG, WEBP"
 
             />
 
             <MetricCard
 
-              label="Client Records"
-
-              value="XLSX / PDF"
-
-              description="Trademark portfolio"
+              label="Upload limit"
+              value="20 MB"
+              description="Per file"
 
             />
 
             <MetricCard
 
-              label="Investigation"
-
-              value="AI"
-
-              description="Conflict analysis"
+              label="Analysis"
+              value="Visual"
+              description="Similarity screening"
 
             />
 
             <MetricCard
 
-              label="Final Output"
-
-              value="PDF"
-
-              description="Investigation report"
+              label="Report export"
+              value="JSON"
+              description="Downloadable check data"
             />
 
           </div>
@@ -243,19 +163,19 @@ export default function TrademarkIntelligencePage() {
 
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
 
-                Investigation Workflow
+                How it works
 
               </p>
 
               <h2 className="mt-2 text-2xl font-bold tracking-tight">
 
-                From documents to reviewed conflict cases
+                Compare, review, and save a visual check
 
               </h2>
 
             </div>
 
-            <div className="mt-8 grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 
               {workflow.map((step, index) => (
 
@@ -303,15 +223,15 @@ export default function TrademarkIntelligencePage() {
 
             <h2 className="mt-2 text-3xl font-bold tracking-tight">
 
-              Trademark Conflict Investigation
+              Trademark Conflict visual screening
 
             </h2>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
 
-              The investigation workspace remains a dedicated service while
-
-              Apexive Community provides the entry point.
+              Compare two files to surface visual matches. This screening is
+              an investigative aid, not a legal opinion or a determination of
+              trademark confusion.
 
             </p>
 
@@ -379,15 +299,14 @@ export default function TrademarkIntelligencePage() {
 
                 <h2 className="mt-3 text-2xl font-bold">
 
-                  Open Trademark Conflict Detector
+                  Open Trademark Conflict
 
                 </h2>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
 
-                  Start a new trademark conflict investigation using the
-
-                  dedicated Apexive AI detector workspace.
+                  Open the dedicated workspace to run a new visual comparison
+                  and continue your investigation.
 
                 </p>
 

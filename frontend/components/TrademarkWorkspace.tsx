@@ -52,6 +52,8 @@ type CheckHistory = {
   pages: number;
 };
 
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -98,6 +100,22 @@ export default function TrademarkWorkspace() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
 
+  function selectFile(
+    file: File | undefined,
+    setFile: (file: File | null) => void,
+    input: HTMLInputElement,
+    label: string,
+  ) {
+    if (file && file.size > MAX_FILE_SIZE) {
+      input.value = "";
+      setFile(null);
+      setError(`${label} must be 20 MB or smaller.`);
+      return;
+    }
+    setFile(file ?? null);
+    setError("");
+  }
+
   const loadHistory = useCallback(async (nextPage: number) => {
     try {
       const data = await request<CheckHistory>(
@@ -106,12 +124,14 @@ export default function TrademarkWorkspace() {
       setHistory(data);
       setPage(nextPage);
       setError("");
+      return data;
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Unable to load Trademark Conflict history.",
       );
+      return null;
     } finally {
       setLoadingHistory(false);
     }
@@ -141,7 +161,11 @@ export default function TrademarkWorkspace() {
       );
       setResult(analysis);
       setLoadingHistory(true);
-      await loadHistory(1);
+      const refreshedHistory = await loadHistory(1);
+      const savedCheck = refreshedHistory?.items[0];
+      if (savedCheck) {
+        setSelectedCheck({ ...savedCheck, result: analysis });
+      }
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -178,6 +202,8 @@ export default function TrademarkWorkspace() {
       original_filename: selectedCheck?.original_filename ?? original?.name ?? null,
       comparison_filename:
         selectedCheck?.comparison_filename ?? comparison?.name ?? null,
+      disclaimer:
+        "Visual similarity screening only; not legal advice or a determination of trademark conflict, likelihood of confusion, or registrability.",
       result,
     };
     const blob = new Blob([JSON.stringify(report, null, 2)], {
@@ -188,7 +214,7 @@ export default function TrademarkWorkspace() {
     link.href = objectUrl;
     link.download = `trademark-conflict-report-${selectedCheck?.id ?? "new"}.json`;
     link.click();
-    URL.revokeObjectURL(objectUrl);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   return (
@@ -207,8 +233,8 @@ export default function TrademarkWorkspace() {
             </p>
             <h2 className="mt-2 text-2xl font-bold">New conflict check</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Upload an original trademark file and a comparison file. PDF,
-              JPG, PNG, and WEBP files are supported up to 20 MB each.
+              Compare two trademark files for visual similarity. PDF, JPG,
+              JPEG, PNG, and WEBP files are supported up to 20 MB each.
             </p>
           </div>
 
@@ -220,10 +246,20 @@ export default function TrademarkWorkspace() {
                 accept=".pdf,.jpg,.jpeg,.png,.webp"
                 required
                 onChange={(event) =>
-                  setOriginal(event.target.files?.[0] ?? null)
+                  selectFile(
+                    event.target.files?.[0],
+                    setOriginal,
+                    event.currentTarget,
+                    "Original file",
+                  )
                 }
                 className="mt-2 block w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm"
               />
+              {original && (
+                <span className="mt-2 block truncate text-xs text-slate-500">
+                  {original.name}
+                </span>
+              )}
             </label>
             <label className="block text-sm font-medium text-slate-700">
               Comparison file
@@ -232,10 +268,20 @@ export default function TrademarkWorkspace() {
                 accept=".pdf,.jpg,.jpeg,.png,.webp"
                 required
                 onChange={(event) =>
-                  setComparison(event.target.files?.[0] ?? null)
+                  selectFile(
+                    event.target.files?.[0],
+                    setComparison,
+                    event.currentTarget,
+                    "Comparison file",
+                  )
                 }
                 className="mt-2 block w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm"
               />
+              {comparison && (
+                <span className="mt-2 block truncate text-xs text-slate-500">
+                  {comparison.name}
+                </span>
+              )}
             </label>
           </div>
 
@@ -284,7 +330,10 @@ export default function TrademarkWorkspace() {
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              <Metric label="Similarity" value={`${result.similarity_percent}%`} />
+              <Metric
+                label="Visual similarity"
+                value={`${result.similarity_percent}%`}
+              />
               <Metric
                 label="Matching areas"
                 value={String(result.matching_area_count)}
@@ -356,6 +405,11 @@ export default function TrademarkWorkspace() {
                 </p>
               )}
             </div>
+            <p className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+              This visual similarity result is a screening aid only. It does
+              not determine legal conflict, likelihood of confusion, or
+              trademark registrability.
+            </p>
           </section>
         )}
       </div>
@@ -389,7 +443,7 @@ export default function TrademarkWorkspace() {
                         Check #{check.id}
                       </span>
                       <span className="text-sm font-semibold text-blue-700">
-                        {check.similarity_percent}%
+                        {check.similarity_percent}% visual
                       </span>
                     </span>
                     <span className="mt-2 block truncate text-xs text-slate-600">

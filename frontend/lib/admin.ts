@@ -20,6 +20,7 @@ export type AdminAccount = {
   is_active: boolean;
   is_admin: true;
   is_super_admin: boolean;
+  role: "ADMIN" | "SUPPORT" | string;
   created_at: string;
 };
 
@@ -55,8 +56,44 @@ export type AdminSubscription = {
   price: string;
   currency: string;
   billing_cycle: string;
-  plan: { name: string; product_key: string };
+  tenant_name: string | null;
+  start_date: string;
   current_period_end: string | null;
+  cancelled_at: string | null;
+  admin_access_reason?: string | null;
+  plan: { id?: number; name: string; product_key: string };
+};
+
+export type AdminSubscriptionDetails = AdminSubscription & {
+  remaining_days: number | null;
+  payment_history: Array<{
+    id: number;
+    status: string;
+    amount: string;
+    currency: string;
+    payment_method: string;
+    paid_at: string | null;
+    created_at: string;
+  }>;
+  activity_log: Array<{
+    id: number;
+    actor_user_id: number | null;
+    actor_name: string;
+    action: string;
+    reason: string | null;
+    created_at: string;
+    old_value: string | null;
+    new_value: string | null;
+  }>;
+};
+
+export type AdminSubscriptionStatistics = {
+  active_subscriptions: number;
+  expired_subscriptions: number;
+  monthly_revenue: string | null;
+  currency: string | null;
+  monthly_revenue_by_currency: Record<string, string>;
+  pending_payment_requests: number;
 };
 
 export type AdminSubscriptionClient = {
@@ -153,10 +190,82 @@ export async function getAdminDashboard() {
   };
 }
 
-export function getAdminSubscriptions() {
+export function getAdminSubscriptions(filters: {
+  search?: string;
+  status?: string;
+  planId?: number;
+} = {}) {
+  const params = new URLSearchParams({ limit: "500" });
+  if (filters.search?.trim()) params.set("search", filters.search.trim());
+  if (filters.status) params.set("status", filters.status);
+  if (filters.planId) params.set("plan_id", String(filters.planId));
   return adminRequest<{ items: AdminSubscription[] }>(
-    "/api/admin/subscriptions?limit=500",
+    `/api/admin/subscriptions?${params.toString()}`,
   );
+}
+
+export function getAdminSubscriptionStatistics() {
+  return adminRequest<AdminSubscriptionStatistics>(
+    "/api/admin/subscription-statistics",
+  );
+}
+
+export function getAdminSubscriptionDetails(subscriptionId: number) {
+  return adminRequest<AdminSubscriptionDetails>(
+    `/api/admin/subscriptions/${subscriptionId}/details`,
+  );
+}
+
+export function approveAdminManualSubscription(subscriptionId: number) {
+  return adminRequest<AdminSubscription>(
+    `/api/admin/subscriptions/${subscriptionId}/approve-manual`,
+    { method: "POST" },
+  );
+}
+
+export function bulkUpdateAdminSubscriptions(payload: {
+  action: "extend" | "cancel";
+  subscription_ids: number[];
+  reason: string;
+  duration_days?: number;
+}) {
+  return adminRequest<{
+    action: string;
+    count: number;
+    subscription_ids: number[];
+  }>("/api/admin/subscription-bulk-actions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function downloadAdminReport(path: string, filename: string) {
+  const token =
+    typeof window === "undefined"
+      ? null
+      : localStorage.getItem("apexive_token");
+  const headers = new Headers({ Accept: "*/*" });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const data: { detail?: string } = await response.json();
+      if (data.detail) message = data.detail;
+    } catch {
+      // Retain the HTTP status when a download error is not JSON.
+    }
+    throw new Error(message);
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export function getAdminSubscriptionPayments() {
@@ -179,6 +288,7 @@ export function createAdminAccount(payload: {
   username: string;
   email: string;
   display_name: string;
+  role?: "ADMIN" | "SUPPORT";
 }) {
   return adminRequest<{
     admin: AdminAccount;
@@ -321,6 +431,8 @@ export function updateAdminSubscription(
                 : {}),
             }),
           }
+        : action === "cancel" && override
+          ? { body: JSON.stringify({ reason: override.reason }) }
         : {}),
     },
   );

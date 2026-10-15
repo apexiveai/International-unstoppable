@@ -1,5 +1,6 @@
 from decimal import Decimal
 from datetime import datetime, timezone
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import desc, func, select
@@ -27,6 +28,7 @@ class AdminCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     email: EmailStr
     display_name: str = Field(min_length=2, max_length=100)
+    role: Literal["ADMIN", "SUPPORT"] = "ADMIN"
 
     @field_validator("username", "display_name", mode="before")
     @classmethod
@@ -82,6 +84,7 @@ def _serialize_admin(account: User) -> dict:
         "is_active": account.is_active,
         "is_admin": account.is_admin,
         "is_super_admin": account.is_super_admin,
+        "role": account.role,
         "created_at": account.created_at,
     }
 
@@ -284,7 +287,7 @@ def create_admin_account(
         tenant_id=admin.tenant_id,
         is_active=True,
         is_admin=True,
-        role="ADMIN",
+        role=payload.role,
         account_status="ACTIVE",
         approved_at=datetime.now(timezone.utc),
         approved_by=admin.id,
@@ -298,7 +301,11 @@ def create_admin_account(
         target_type="user",
         target_id=account.id,
         tenant_id=account.tenant_id,
-        details={"username": account.username, "is_super_admin": False},
+        details={
+            "username": account.username,
+            "is_super_admin": False,
+            "role": account.role,
+        },
     )
     db.commit()
     db.refresh(account)
