@@ -605,17 +605,32 @@ function AdminSubscriptionsDashboard() {
                     defaultValue=""
                     className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-sm text-white"
                   >
-                    <option value="" disabled>Select client</option>
+                    <option value="" disabled>
+                      {clients.length ? "Select client" : "No clients available"}
+                    </option>
                     {clients.map((client) => (
                       <option key={client.id} value={client.tenant_id}>
                         {client.display_name} · {client.email}
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] leading-4 text-slate-500">
-                    Choose the client who should receive this subscription. Use
-                    their name and email to identify the correct account.
-                  </span>
+                  {clients.length ? (
+                    <span className="text-[11px] leading-4 text-slate-500">
+                      Choose the client who should receive this subscription. Use
+                      their name and email to identify the correct account.
+                    </span>
+                  ) : (
+                    <span className="text-[11px] leading-4 text-amber-300">
+                      No client accounts are available.{" "}
+                      <Link
+                        href="/admin#create-client"
+                        className="font-semibold text-cyan-300 underline"
+                      >
+                        Create a client account
+                      </Link>{" "}
+                      before creating a subscription.
+                    </span>
+                  )}
                 </label>
                 <label className="grid gap-1 text-xs text-slate-400">
                   Plan
