@@ -738,6 +738,60 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["items"][0]["id"], self.user.id)
 
+    def test_manual_subscription_can_select_client_without_tenant(self):
+        client_without_tenant = User(
+            username="legacy-client",
+            email="legacy-client@example.test",
+            password_hash="not-used",
+            display_name="Legacy Client",
+            is_active=True,
+            is_admin=False,
+            is_super_admin=False,
+            account_status="ACTIVE",
+        )
+        workforce_plan = SubscriptionPlan(
+            code="AUTONOMOUS_WORKFORCE",
+            product_key="workforce",
+            name="Workforce",
+            description="Test plan",
+            monthly_price=Decimal("100.00"),
+            currency="USD",
+            billing_cycle="monthly",
+            is_active=True,
+        )
+        self.db.add_all((client_without_tenant, workforce_plan))
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        clients_response = self.client.get("/api/admin/subscription-clients")
+        self.assertEqual(clients_response.status_code, 200, clients_response.text)
+        listed_client = next(
+            item
+            for item in clients_response.json()["items"]
+            if item["id"] == client_without_tenant.id
+        )
+        self.assertIsNone(listed_client["tenant_id"])
+
+        response = self.client.post(
+            "/api/admin/subscriptions",
+            json={
+                "client_id": client_without_tenant.id,
+                "plan_id": workforce_plan.id,
+                "duration_days": 30,
+                "reason": "Approved by management",
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.db.expire_all()
+        self.assertIsNotNone(
+            self.db.get(User, client_without_tenant.id).tenant_id
+        )
+        self.assertEqual(
+            response.json()["tenant_id"],
+            self.db.get(User, client_without_tenant.id).tenant_id,
+        )
+
     def test_admin_subscription_statistics_include_revenue_trend_and_expiring_soon(self):
         expiring = self.add_subscription(end_delta=timedelta(days=5))
         self.add_subscription(end_delta=timedelta(days=45))

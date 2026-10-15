@@ -179,13 +179,13 @@ function AdminSubscriptionsDashboard() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const tenantId = Number(form.get("tenant_id"));
+    const clientId = Number(form.get("client_id"));
     const planId = Number(form.get("plan_id"));
     const durationDays = Number(form.get("duration_days"));
     const reason = String(form.get("reason") ?? "").trim();
     if (
-      !Number.isInteger(tenantId) ||
-      tenantId <= 0 ||
+      !Number.isInteger(clientId) ||
+      clientId <= 0 ||
       !Number.isInteger(planId) ||
       planId <= 0 ||
       !Number.isInteger(durationDays) ||
@@ -204,7 +204,7 @@ function AdminSubscriptionsDashboard() {
     setNotice("");
     try {
       await createAdminSubscription({
-        tenant_id: tenantId,
+        client_id: clientId,
         plan_id: planId,
         duration_days: durationDays,
         reason,
@@ -600,7 +600,7 @@ function AdminSubscriptionsDashboard() {
                 <label className="grid gap-1 text-xs text-slate-400">
                   Client
                   <select
-                    name="tenant_id"
+                    name="client_id"
                     required
                     defaultValue=""
                     className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-sm text-white"
@@ -609,7 +609,7 @@ function AdminSubscriptionsDashboard() {
                       {clients.length ? "Select client" : "No clients available"}
                     </option>
                     {clients.map((client) => (
-                      <option key={client.id} value={client.tenant_id}>
+                      <option key={client.id} value={client.id}>
                         {client.display_name} · {client.email}
                       </option>
                     ))}

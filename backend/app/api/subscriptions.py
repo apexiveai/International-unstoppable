@@ -1139,13 +1139,16 @@ class AdminSubscriptionPriceRequest(BaseModel):
 
 
 class AdminSubscriptionCreateRequest(BaseModel):
-    tenant_id: int = Field(gt=0)
+    tenant_id: int | None = Field(default=None, gt=0)
+    client_id: int | None = Field(default=None, gt=0)
     plan_id: int = Field(gt=0)
     duration_days: int = Field(default=30, ge=1, le=3660)
     reason: str = Field(min_length=3, max_length=2000)
 
     @model_validator(mode="after")
-    def validate_reason(self):
+    def validate_request(self):
+        if (self.tenant_id is None) == (self.client_id is None):
+            raise ValueError("Choose exactly one client or tenant.")
         if len(self.reason.strip()) < 3:
             raise ValueError("An approval reason is required.")
         return self
@@ -1246,7 +1249,7 @@ def admin_list_subscription_clients(
 ):
     clients = db.scalars(
         select(User)
-        .where(User.is_admin.is_(False), User.tenant_id.is_not(None))
+        .where(User.is_admin.is_(False))
         .order_by(User.display_name, User.id)
     ).all()
     return {
@@ -1269,10 +1272,6 @@ def admin_create_subscription(
     db: Session = Depends(get_db),
     admin: User = Depends(require_subscription_operator),
 ):
-    tenant = db.get(Tenant, payload.tenant_id)
-    if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant not found.")
-
     plan = db.get(SubscriptionPlan, payload.plan_id)
     if plan is None or not plan.is_active:
         raise HTTPException(
@@ -1289,6 +1288,28 @@ def admin_create_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="Trademark Conflict access must be approved through payment verification.",
         )
+
+    if payload.client_id is not None:
+        client = db.get(User, payload.client_id)
+        if client is None or client.is_admin:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        tenant = (
+            db.get(Tenant, client.tenant_id)
+            if client.tenant_id is not None
+            else None
+        )
+        if tenant is None:
+            tenant = Tenant(
+                name=f"{client.display_name} Workspace",
+                slug=f"client-{client.id}-{secrets.token_hex(4)}-workspace",
+            )
+            db.add(tenant)
+            db.flush()
+            client.tenant_id = tenant.id
+    else:
+        tenant = db.get(Tenant, payload.tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="Tenant not found.")
 
     existing = db.scalar(
         select(Subscription.id).where(

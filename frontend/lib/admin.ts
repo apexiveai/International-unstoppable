@@ -111,7 +111,7 @@ export type AdminSubscriptionStatistics = {
 
 export type AdminSubscriptionClient = {
   id: number;
-  tenant_id: number;
+  tenant_id: number | null;
   username: string;
   email: string;
   display_name: string;
@@ -461,7 +461,8 @@ export function updateAdminSubscription(
 }
 
 export function createAdminSubscription(payload: {
-  tenant_id: number;
+  tenant_id?: number;
+  client_id?: number;
   plan_id: number;
   duration_days: number;
   reason: string;
