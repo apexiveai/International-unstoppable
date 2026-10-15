@@ -4,7 +4,7 @@ import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.database import get_db
 from app.models import Category, Thread, User
 
 from app.schemas.thread import ThreadCreate, ThreadResponse
+from app.api.pagination import Pagination, paginate_statement, pagination_parameters
 
 router = APIRouter(
 
@@ -94,14 +95,13 @@ def generate_unique_slug(
 
     "",
 
-    response_model=list[ThreadResponse],
-
 )
 
 def get_threads(
 
     category_id: int | None = Query(default=None),
-
+    q: str = Query(default="", max_length=200),
+    pagination: Pagination = Depends(pagination_parameters),
     db: Session = Depends(get_db),
 
 ):
@@ -125,14 +125,19 @@ def get_threads(
             Thread.category_id == category_id
 
         )
+    if q.strip():
+        search = f"%{q.strip()}%"
+        query = query.where(or_(Thread.title.ilike(search), Thread.content.ilike(search)))
 
     query = query.order_by(
-
-        Thread.created_at.desc()
-
+        Thread.created_at.desc(), Thread.id.desc()
     )
-
-    return db.scalars(query).all()
+    return paginate_statement(
+        db,
+        query,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
 
 @router.get(
 

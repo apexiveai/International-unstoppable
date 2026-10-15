@@ -25,17 +25,14 @@ import {
 } from "lucide-react";
 
 import {
-
   getSubscriptionPlans,
-
+  getProductAccess,
+  createProductLaunch,
   type SubscriptionPlan,
-
 } from "@/lib/subscriptions";
-
 import {
-
   createPayment,
-
+  getPayment,
   type CreatePaymentResponse,
 
   type PaymentMethod,
@@ -153,8 +150,67 @@ export default function CheckoutClient() {
     useState<CreatePaymentResponse | null>(null);
 
   const [loading, setLoading] = useState(false);
-
   const [error, setError] = useState("");
+  const paymentId = payment?.id;
+
+  useEffect(() => {
+    if (paymentId === undefined || productKey !== "trademark") {
+      return;
+    }
+    const pollingPaymentId = paymentId;
+
+    let stopped = false;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    async function checkForActivation() {
+      try {
+        const currentPayment = await getPayment(pollingPaymentId);
+        if (stopped) return;
+        setPayment(currentPayment);
+
+        if (
+          ["rejected", "refunded", "cancelled", "failed"].includes(
+            currentPayment.status,
+          )
+        ) {
+          return;
+        }
+
+        if (currentPayment.status === "verified") {
+          const access = await getProductAccess("trademark");
+          if (
+            access.has_access &&
+            (access.status === "active" || access.status === "trialing")
+          ) {
+            const launch = await createProductLaunch("trademark");
+            if (!stopped) {
+              window.location.assign(launch.url);
+            }
+            return;
+          }
+        }
+        if (!stopped) {
+          setError("");
+          timeout = setTimeout(() => void checkForActivation(), 3000);
+        }
+      } catch (reason) {
+        if (!stopped) {
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Unable to check payment confirmation.",
+          );
+          timeout = setTimeout(() => void checkForActivation(), 5000);
+        }
+      }
+    }
+
+    timeout = setTimeout(() => void checkForActivation(), 3000);
+    return () => {
+      stopped = true;
+      clearTimeout(timeout);
+    };
+  }, [paymentId, productKey]);
 
   useEffect(() => {
 
@@ -552,10 +608,14 @@ export default function CheckoutClient() {
 
                 </span>
 
-                <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-medium uppercase tracking-wide text-amber-300">
-
+                <span className={`rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide ${
+                  payment.status === "verified"
+                    ? "bg-emerald-400/10 text-emerald-300"
+                    : ["rejected", "refunded", "cancelled", "failed"].includes(payment.status)
+                      ? "bg-red-400/10 text-red-300"
+                      : "bg-amber-400/10 text-amber-300"
+                }`}>
                   {payment.status}
-
                 </span>
 
               </div>
@@ -563,15 +623,21 @@ export default function CheckoutClient() {
             </div>
 
             <div className="mt-6 rounded-2xl border border-amber-400/10 bg-amber-400/5 p-4 text-sm leading-6 text-amber-200">
-
-              Payment is currently pending verification.
-
-              An administrator will verify the payment and activate
-              your subscription. Access is only available after
-
-              verified payment confirmation.
-
+              {payment.status === "verified"
+                ? productKey === "trademark"
+                  ? "Payment confirmed. Your product access is being checked; you will be sent to Trademark Conflict automatically."
+                  : "Payment confirmed. Your product access is being checked."
+                : ["rejected", "refunded", "cancelled", "failed"].includes(payment.status)
+                  ? `This payment is ${payment.status}. Contact support if you believe this is an error.`
+                  : productKey === "trademark"
+                    ? "An administrator will confirm your payment. Once confirmed, your subscription will activate and you will be sent to Trademark Conflict automatically."
+                    : "An administrator will confirm your payment and activate your subscription. Access is available after confirmation."}
             </div>
+            {error ? (
+              <div role="alert" className="mt-4 rounded-xl border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-200">
+                {error}
+              </div>
+            ) : null}
 
             <Link
 

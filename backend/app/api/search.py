@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query
+from math import ceil
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,8 @@ def search_projects(
     q: str = Query(default="", max_length=200),
     technology: str | None = Query(default=None, max_length=100),
     category: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1, le=100),
+    page_size: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     projects = db.scalars(select(Project)).all()
@@ -44,7 +47,7 @@ def search_projects(
         if (parsed := parse_embedding(row.vector)) is not None
     }
     query_embedding = embed_text(q) if q.strip() else None
-    return rank_projects(
+    ranked = rank_projects(
         projects,
         technologies,
         q,
@@ -53,3 +56,12 @@ def search_projects(
         query_embedding,
         embeddings,
     )
+    total = len(ranked)
+    start = (page - 1) * page_size
+    return {
+        "items": ranked[start : start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": min(100, ceil(total / page_size)) if total else 0,
+    }

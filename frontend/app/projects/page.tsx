@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import SiteHeader from "@/components/SiteHeader";
+import Pagination from "@/components/Pagination";
 
 import {
 
   getProjects,
-
   Project,
-
+  PaginatedResponse,
 } from "@/lib/api";
 
 const categories = [
@@ -33,48 +33,41 @@ const categories = [
 export default function ProjectsPage() {
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(0);
+  const [page, setPage] = useState(1);
 
   const [search, setSearch] = useState("");
 
   const [category, setCategory] = useState("All");
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-
-    getProjects()
-
-      .then(setProjects)
-
-      .finally(() => setLoading(false));
-
-  }, []);
-
-  const filteredProjects = useMemo(() => {
-
-    const query = search.trim().toLowerCase();
-
-    return projects.filter((project) => {
-
-      const categoryMatch =
-
-        category === "All" ||
-
-        project.category === category;
-
-      const searchMatch =
-
-        !query ||
-
-        project.name.toLowerCase().includes(query) ||
-
-        project.description.toLowerCase().includes(query);
-
-      return categoryMatch && searchMatch;
-
-    });
-
-  }, [projects, search, category]);
+    let mounted = true;
+    setLoading(true);
+    setError("");
+    getProjects({ q: search, category, page })
+      .then((result: PaginatedResponse<Project>) => {
+        if (!mounted) return;
+        setProjects(result.items);
+        setTotal(result.total);
+        setPages(result.pages);
+      })
+      .catch((reason: unknown) => {
+        if (mounted) {
+          setProjects([]);
+          setError(reason instanceof Error ? reason.message : "Unable to load projects.");
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [search, category, page]);
 
   return (
 
@@ -131,8 +124,10 @@ export default function ProjectsPage() {
             value={search}
 
             onChange={(event) =>
-
-              setSearch(event.target.value)
+              {
+                setSearch(event.target.value);
+                setPage(1);
+              }
 
             }
 
@@ -152,7 +147,10 @@ export default function ProjectsPage() {
 
               key={item}
 
-              onClick={() => setCategory(item)}
+              onClick={() => {
+                setCategory(item);
+                setPage(1);
+              }}
 
               className={`rounded-full px-4 py-2 text-xs font-bold ${
 
@@ -182,11 +180,19 @@ export default function ProjectsPage() {
 
           </div>
 
+        ) : error ? (
+          <div role="alert" className="mt-8 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
+            {error}
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="mt-10 rounded-2xl border border-slate-200 p-12 text-center text-slate-500">
+            No projects match these filters.
+          </div>
         ) : (
 
           <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
 
-            {filteredProjects.map((project) => (
+            {projects.map((project) => (
 
               <Link
 
@@ -238,7 +244,14 @@ export default function ProjectsPage() {
           </div>
 
         )}
-
+        {!loading && !error && (
+          <Pagination
+            page={page}
+            pages={pages}
+            total={total}
+            onPageChange={setPage}
+          />
+        )}
       </main>
 
     </div>

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.models import Project, ProjectEmbedding, ReputationEvent, User
 from app.services.embeddings import embed_text
 
 from app.schemas.project import ProjectCreate, ProjectResponse
+from app.api.pagination import Pagination, paginate_statement, pagination_parameters
 
 router = APIRouter(
 
@@ -28,25 +29,31 @@ router = APIRouter(
 
     "",
 
-    response_model=list[ProjectResponse],
-
 )
 
 def list_projects(
 
+    q: str = "",
+    category: str | None = None,
+    pagination: Pagination = Depends(pagination_parameters),
     db: Session = Depends(get_db),
 
 ):
 
-    projects = db.scalars(
-
-        select(Project)
-
-        .order_by(desc(Project.created_at))
-
-    ).all()
-
-    return projects
+    statement = select(Project)
+    if category and category.casefold() != "all":
+        statement = statement.where(Project.category == category)
+    if q.strip():
+        search = f"%{q.strip()}%"
+        statement = statement.where(
+            or_(Project.name.ilike(search), Project.description.ilike(search))
+        )
+    return paginate_statement(
+        db,
+        statement.order_by(desc(Project.created_at), Project.id.desc()),
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
 
 @router.get(
 

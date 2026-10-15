@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -220,27 +220,92 @@ def verify_payment(
     admin: User = Depends(require_admin),
 ):
     payment = _get_payment(db, payment_id)
-    if payment.status == "verified":
-        return _serialize_payment(payment)
-    if payment.status in {"rejected", "refunded", "cancelled"}:
+    if payment.status != "verified" and payment.status in {
+        "rejected",
+        "refunded",
+        "cancelled",
+    }:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Payment in status '{payment.status}' cannot be verified.",
         )
-    old_status = payment.status
-    payment.status = "verified"
-    payment.failure_reason = None
-    payment.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    write_audit_log(
-        db,
-        tenant_id=payment.tenant_id,
-        actor_user_id=admin.id,
-        action="payment.verified",
-        target_type="payment",
-        target_id=payment.id,
-        old_value={"status": old_status},
-        new_value={"status": payment.status},
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if payment.status != "verified":
+        old_status = payment.status
+        payment.status = "verified"
+        payment.failure_reason = None
+        payment.paid_at = now
+        write_audit_log(
+            db,
+            tenant_id=payment.tenant_id,
+            actor_user_id=admin.id,
+            action="payment.verified",
+            target_type="payment",
+            target_id=payment.id,
+            old_value={"status": old_status},
+            new_value={"status": payment.status},
+        )
+
+    subscription = (
+        db.get(Subscription, payment.subscription_id)
+        if payment.subscription_id is not None
+        else None
     )
+    if payment.subscription_id is not None and subscription is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The payment's linked subscription could not be found.",
+        )
+    if subscription is not None and subscription.status == "pending":
+        if (
+            subscription.tenant_id != payment.tenant_id
+            or subscription.plan_id != payment.plan_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The payment does not match its linked subscription.",
+            )
+        if subscription.plan.product_key not in PUBLISHED_PRODUCT_KEYS:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This subscription's product is not available for access.",
+            )
+        another_active = db.scalar(
+            select(Subscription.id).where(
+                Subscription.tenant_id == subscription.tenant_id,
+                Subscription.plan_id == subscription.plan_id,
+                Subscription.status == "active",
+                Subscription.id != subscription.id,
+            )
+        )
+        if another_active is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An active subscription already exists for this plan.",
+            )
+
+        previous_status = subscription.status
+        subscription.status = "active"
+        subscription.start_date = now
+        subscription.current_period_end = now + timedelta(days=30)
+        subscription.cancelled_at = None
+        subscription.admin_access_reason = None
+        write_audit_log(
+            db,
+            tenant_id=subscription.tenant_id,
+            actor_user_id=admin.id,
+            action="subscription.activated",
+            target_type="subscription",
+            target_id=subscription.id,
+            old_value={"status": previous_status},
+            new_value={
+                "status": subscription.status,
+                "payment_id": payment.id,
+                "payment_override": False,
+                "current_period_end": subscription.current_period_end.isoformat(),
+            },
+        )
+
     db.commit()
     db.refresh(payment)
     return _serialize_payment(payment)

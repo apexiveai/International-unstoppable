@@ -78,6 +78,14 @@ export type Thread = {
 
 };
 
+export type PaginatedResponse<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+};
+
 export type Reply = {
 
   id: number;
@@ -356,9 +364,22 @@ export type Resource = {
 
 };
 
-export async function getArticles(): Promise<Article[]> {
+export async function getArticles(options: {
+  q?: string;
+  category?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<PaginatedResponse<Article>> {
+  const params = new URLSearchParams({
+    page: String(options.page ?? 1),
+    page_size: String(options.pageSize ?? 10),
+  });
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.category && options.category !== "All") {
+    params.set("category", options.category);
+  }
 
-  const response = await fetchApi(`${API_URL}/api/articles`, {
+  const response = await fetchApi(`${API_URL}/api/articles?${params}`, {
 
     cache: "no-store",
 
@@ -415,9 +436,22 @@ export async function getFeaturedArticles(): Promise<Article[]> {
 
 }
 
-export async function getProjects(): Promise<Project[]> {
+export async function getProjects(options: {
+  q?: string;
+  category?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<PaginatedResponse<Project>> {
+  const params = new URLSearchParams({
+    page: String(options.page ?? 1),
+    page_size: String(options.pageSize ?? 10),
+  });
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.category && options.category !== "All") {
+    params.set("category", options.category);
+  }
 
-  const response = await fetchApi(`${API_URL}/api/projects`, {
+  const response = await fetchApi(`${API_URL}/api/projects?${params}`, {
 
     cache: "no-store",
 
@@ -475,9 +509,26 @@ export async function getFeaturedProjects(): Promise<Project[]> {
 
 }
 
-export async function getResources(): Promise<Resource[]> {
+export async function getResources(options: {
+  q?: string;
+  category?: string;
+  resourceType?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<PaginatedResponse<Resource>> {
+  const params = new URLSearchParams({
+    page: String(options.page ?? 1),
+    page_size: String(options.pageSize ?? 10),
+  });
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.category && options.category !== "All") {
+    params.set("category", options.category);
+  }
+  if (options.resourceType && options.resourceType !== "All") {
+    params.set("resource_type", options.resourceType);
+  }
 
-  const response = await fetchApi(`${API_URL}/api/resources`, {
+  const response = await fetchApi(`${API_URL}/api/resources?${params}`, {
 
     cache: "no-store",
 

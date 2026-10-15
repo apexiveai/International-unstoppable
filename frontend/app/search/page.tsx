@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import SiteHeader from "@/components/SiteHeader";
 import API_URL from "@/lib/api";
+import Pagination from "@/components/Pagination";
 
 type SearchResult = {
   id: number;
@@ -20,16 +21,23 @@ export default function SearchPage() {
   const [technology, setTechnology] = useState("");
   const [category, setCategory] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState("");
 
-  async function searchProjects(event: FormEvent) {
-    event.preventDefault();
+  async function searchProjects(event?: FormEvent, requestedPage = 1) {
+    event?.preventDefault();
     setLoading(true);
     setSearched(true);
     setError("");
-    const params = new URLSearchParams({ q: query });
+    const params = new URLSearchParams({
+      q: query,
+      page: String(requestedPage),
+      page_size: "10",
+    });
     if (technology) params.set("technology", technology);
     if (category) params.set("category", category);
     try {
@@ -38,9 +46,15 @@ export default function SearchPage() {
         const data = await response.json().catch(() => null);
         throw new Error(data?.detail ?? `Search failed (${response.status}).`);
       }
-      setResults(await response.json());
+      const data = await response.json();
+      setResults(data.items);
+      setTotal(data.total);
+      setPages(data.pages);
+      setPage(data.page);
     } catch (reason) {
       setResults([]);
+      setTotal(0);
+      setPages(0);
       setError(
         reason instanceof Error
           ? reason.message
@@ -100,7 +114,7 @@ export default function SearchPage() {
             <div className="mb-5 flex items-center justify-between">
               <h2 className="text-xl font-black text-[#172033]">Projects</h2>
               <span className="text-sm text-slate-400">
-                Semantic ranking · {results.length} results
+                Semantic ranking · {total} results
               </span>
             </div>
             <div className="grid gap-5 md:grid-cols-2">
@@ -120,6 +134,12 @@ export default function SearchPage() {
                 </Link>
               ))}
             </div>
+            <Pagination
+              page={page}
+              pages={pages}
+              total={total}
+              onPageChange={(nextPage) => void searchProjects(undefined, nextPage)}
+            />
           </section>
         )}
       </main>

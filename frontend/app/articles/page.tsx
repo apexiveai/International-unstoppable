@@ -2,16 +2,15 @@
 
 import Link from "next/link";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import SiteHeader from "@/components/SiteHeader";
+import Pagination from "@/components/Pagination";
 
 import {
-
   Article,
-
   getArticles,
-
+  PaginatedResponse,
 } from "@/lib/api";
 
 const categories = [
@@ -33,6 +32,9 @@ const categories = [
 export default function ArticlesPage() {
 
   const [articles, setArticles] = useState<Article[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(0);
+  const [page, setPage] = useState(1);
 
   const [search, setSearch] = useState("");
 
@@ -43,52 +45,28 @@ export default function ArticlesPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-
-    getArticles()
-
-      .then(setArticles)
-
-      .catch(() => {
-
-        setError("Unable to load articles.");
-
+    let mounted = true;
+    setLoading(true);
+    setError("");
+    getArticles({ q: search, category, page })
+      .then((result: PaginatedResponse<Article>) => {
+        if (!mounted) return;
+        setArticles(result.items);
+        setTotal(result.total);
+        setPages(result.pages);
       })
-
+      .catch((reason: unknown) => {
+        if (mounted) {
+          setError(reason instanceof Error ? reason.message : "Unable to load articles.");
+        }
+      })
       .finally(() => {
-
-        setLoading(false);
-
+        if (mounted) setLoading(false);
       });
-
-  }, []);
-
-  const filteredArticles = useMemo(() => {
-
-    const query = search.trim().toLowerCase();
-
-    return articles.filter((article) => {
-
-      const matchesCategory =
-
-        category === "All" ||
-
-        article.category === category;
-
-      const matchesSearch =
-
-        !query ||
-
-        article.title.toLowerCase().includes(query) ||
-
-        article.excerpt.toLowerCase().includes(query) ||
-
-        article.content.toLowerCase().includes(query);
-
-      return matchesCategory && matchesSearch;
-
-    });
-
-  }, [articles, search, category]);
+    return () => {
+      mounted = false;
+    };
+  }, [search, category, page]);
 
   const featured = articles.find(
 
@@ -134,8 +112,10 @@ export default function ArticlesPage() {
             value={search}
 
             onChange={(event) =>
-
-              setSearch(event.target.value)
+              {
+                setSearch(event.target.value);
+                setPage(1);
+              }
 
             }
 
@@ -169,7 +149,10 @@ export default function ArticlesPage() {
 
               type="button"
 
-              onClick={() => setCategory(item)}
+              onClick={() => {
+                setCategory(item);
+                setPage(1);
+              }}
 
               className={`rounded-full px-4 py-2 text-xs font-bold transition ${
 
@@ -272,13 +255,13 @@ export default function ArticlesPage() {
 
               <span className="text-sm text-slate-400">
 
-                {filteredArticles.length} articles
+                {total} articles
 
               </span>
 
             </div>
 
-            {filteredArticles.length === 0 ? (
+            {articles.length === 0 ? (
 
               <div className="rounded-2xl border border-slate-200 p-12 text-center">
 
@@ -300,7 +283,7 @@ export default function ArticlesPage() {
 
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
 
-                {filteredArticles.map((article) => (
+                {articles.map((article) => (
 
                   <Link
 
@@ -351,9 +334,13 @@ export default function ArticlesPage() {
                 ))}
 
               </div>
-
             )}
-
+            <Pagination
+              page={page}
+              pages={pages}
+              total={total}
+              onPageChange={setPage}
+            />
           </section>
 
         )}

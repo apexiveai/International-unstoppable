@@ -14,6 +14,8 @@ from app.models.tenant import (
     AuditLog,
     TenantAuditLog,
     Permission,
+    ChatConversation,
+    ChatMessage,
 )
 from app.models.notification import Notification
 from app.models.project_engagement import (
@@ -51,6 +53,8 @@ __all__ = [
     "AuditLog",
     "TenantAuditLog",
     "Permission",
+    "ChatConversation",
+    "ChatMessage",
         
     "SubscriptionPlan",
     "Subscription",

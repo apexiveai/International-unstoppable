@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import Resource, User
 
 from app.schemas.resource import ResourceCreate, ResourceResponse
+from app.api.pagination import Pagination, paginate_statement, pagination_parameters
 
 router = APIRouter(
 
@@ -24,27 +25,34 @@ router = APIRouter(
 
     "",
 
-    response_model=list[ResourceResponse],
-
 )
 
 def list_resources(
 
+    q: str = "",
+    category: str | None = None,
+    resource_type: str | None = None,
+    pagination: Pagination = Depends(pagination_parameters),
     db: Session = Depends(get_db),
 
 ):
 
-    resources = db.scalars(
-
-        select(Resource)
-
-        .where(Resource.is_published.is_(True))
-
-        .order_by(desc(Resource.created_at))
-
-    ).all()
-
-    return resources
+    statement = select(Resource).where(Resource.is_published.is_(True))
+    if category and category.casefold() != "all":
+        statement = statement.where(Resource.category == category)
+    if resource_type and resource_type.casefold() != "all":
+        statement = statement.where(Resource.resource_type == resource_type)
+    if q.strip():
+        search = f"%{q.strip()}%"
+        statement = statement.where(
+            or_(Resource.title.ilike(search), Resource.description.ilike(search))
+        )
+    return paginate_statement(
+        db,
+        statement.order_by(desc(Resource.created_at), Resource.id.desc()),
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
 
 @router.get(
 

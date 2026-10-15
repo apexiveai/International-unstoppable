@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import Article, User
 
 from app.schemas.article import ArticleCreate, ArticleResponse
+from app.api.pagination import Pagination, paginate_statement, pagination_parameters
 
 router = APIRouter(
 
@@ -24,27 +25,35 @@ router = APIRouter(
 
     "",
 
-    response_model=list[ArticleResponse],
-
 )
 
 def list_articles(
 
+    q: str = "",
+    category: str | None = None,
+    pagination: Pagination = Depends(pagination_parameters),
     db: Session = Depends(get_db),
 
 ):
 
-    articles = db.scalars(
-
-        select(Article)
-
-        .where(Article.is_published.is_(True))
-
-        .order_by(desc(Article.created_at))
-
-    ).all()
-
-    return articles
+    statement = select(Article).where(Article.is_published.is_(True))
+    if category and category.casefold() != "all":
+        statement = statement.where(Article.category == category)
+    if q.strip():
+        search = f"%{q.strip()}%"
+        statement = statement.where(
+            or_(
+                Article.title.ilike(search),
+                Article.excerpt.ilike(search),
+                Article.content.ilike(search),
+            )
+        )
+    return paginate_statement(
+        db,
+        statement.order_by(desc(Article.created_at), Article.id.desc()),
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
 
 @router.get(
 

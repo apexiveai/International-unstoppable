@@ -396,7 +396,7 @@ function AdminSubscriptionsDashboard() {
             <section className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
               <h2 className="text-lg font-semibold">Payment requests</h2>
               <p className="mt-1 text-sm text-slate-400">
-                Verify a payment, then activate its pending subscription.
+                Confirming a payment activates its linked pending subscription and grants product access.
               </p>
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[700px] text-left text-sm">
@@ -435,12 +435,12 @@ function AdminSubscriptionsDashboard() {
                                 onClick={() =>
                                   void runAction(
                                     () => verifyAdminPayment(payment.id),
-                                    `Payment #${payment.id} verified.`,
+                                    `Payment #${payment.id} confirmed and its subscription activated.`,
                                   )
                                 }
                                 className="font-semibold text-emerald-300 disabled:opacity-50"
                               >
-                                Verify
+                                Confirm &amp; Activate
                               </button>
                               <button
                                 disabled={busy}

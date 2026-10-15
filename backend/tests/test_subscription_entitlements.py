@@ -335,7 +335,7 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "cancelled")
 
-    def test_customer_can_submit_payment_request_for_admin_review(self):
+    def test_admin_confirmation_activates_subscription_and_grants_access(self):
         response = self.client.post(
             "/api/payments/create",
             json={"plan_id": self.plan.id, "payment_method": "card"},
@@ -350,14 +350,14 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin
 
         verified = self.client.post(f"/api/admin/payments/{payment['id']}/verify")
-        activated = self.client.post(
-            f"/api/admin/subscriptions/{subscription.id}/activate",
-            json={"duration_days": 30},
-        )
 
         self.assertEqual(verified.status_code, 200, verified.text)
-        self.assertEqual(activated.status_code, 200, activated.text)
         self.db.expire_all()
+        self.assertEqual(self.db.get(Subscription, subscription.id).status, "active")
+        self.assertEqual(
+            self.db.get(Payment, payment["id"]).status,
+            "verified",
+        )
         self.assertTrue(
             tenant_product_access(self.db, self.tenant_a.id, "trademark")[
                 "has_access"

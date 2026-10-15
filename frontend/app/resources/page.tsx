@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import SiteHeader from "@/components/SiteHeader";
+import Pagination from "@/components/Pagination";
 
 import {
 
   getResources,
-
   Resource,
-
+  PaginatedResponse,
 } from "@/lib/api";
 
 const categories = [
@@ -53,6 +53,9 @@ const types = [
 export default function ResourcesPage() {
 
   const [resources, setResources] = useState<Resource[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(0);
+  const [page, setPage] = useState(1);
 
   const [search, setSearch] = useState("");
 
@@ -61,57 +64,31 @@ export default function ResourcesPage() {
   const [type, setType] = useState("All");
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    getResources()
-      .then(setResources)
-      .catch(() => setResources([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const filtered = useMemo(() => {
-
-    const query = search.trim().toLowerCase();
-
-    return resources.filter((resource) => {
-
-      const categoryMatch =
-
-        category === "All" ||
-
-        resource.category === category;
-
-      const typeMatch =
-
-        type === "All" ||
-
-        resource.resource_type === type;
-
-      const searchMatch =
-
-        !query ||
-
-        resource.title.toLowerCase().includes(query) ||
-
-        resource.description
-
-          .toLowerCase()
-
-          .includes(query);
-
-      return (
-
-        categoryMatch &&
-
-        typeMatch &&
-
-        searchMatch
-
-      );
-
-    });
-
-  }, [resources, search, category, type]);
+    let mounted = true;
+    setLoading(true);
+    setError("");
+    getResources({ q: search, category, resourceType: type, page })
+      .then((result: PaginatedResponse<Resource>) => {
+        if (!mounted) return;
+        setResources(result.items);
+        setTotal(result.total);
+        setPages(result.pages);
+      })
+      .catch((reason: unknown) => {
+        if (mounted) {
+          setError(reason instanceof Error ? reason.message : "Unable to load resources.");
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [search, category, type, page]);
 
   return (
 
@@ -168,8 +145,10 @@ export default function ResourcesPage() {
             value={search}
 
             onChange={(event) =>
-
-              setSearch(event.target.value)
+              {
+                setSearch(event.target.value);
+                setPage(1);
+              }
 
             }
 
@@ -184,8 +163,10 @@ export default function ResourcesPage() {
             value={type}
 
             onChange={(event) =>
-
-              setType(event.target.value)
+              {
+                setType(event.target.value);
+                setPage(1);
+              }
 
             }
 
@@ -215,7 +196,10 @@ export default function ResourcesPage() {
 
               key={item}
 
-              onClick={() => setCategory(item)}
+              onClick={() => {
+                setCategory(item);
+                setPage(1);
+              }}
 
               className={`rounded-full px-4 py-2 text-xs font-bold ${
 
@@ -245,10 +229,13 @@ export default function ResourcesPage() {
 
           </div>
 
+        ) : error ? (
+          <div role="alert" className="mt-8 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-600">
+            {error}
+          </div>
         ) : (
-
           <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((resource) => (
+            {resources.map((resource) => (
               <Link
 
                 key={resource.id}
@@ -299,6 +286,14 @@ export default function ResourcesPage() {
 
           </div>
 
+        )}
+        {!loading && !error && (
+          <Pagination
+            page={page}
+            pages={pages}
+            total={total}
+            onPageChange={setPage}
+          />
         )}
 
       </main>
