@@ -63,9 +63,14 @@ function getAdminRoleSnapshot() {
   try {
     const rawUser = window.localStorage.getItem("apexive_user");
     const user = rawUser
-      ? (JSON.parse(rawUser) as { is_admin?: boolean; is_super_admin?: boolean })
+      ? (JSON.parse(rawUser) as {
+          is_admin?: boolean;
+          is_super_admin?: boolean;
+          role?: string;
+        })
       : null;
     if (user?.is_admin && user.is_super_admin) return "super_admin";
+    if (user?.is_admin && user.role?.toUpperCase() === "SUPPORT") return "support";
     return user?.is_admin ? "admin" : "user";
   } catch {
     return "user";
@@ -128,18 +133,22 @@ function AdminDashboard() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const [dashboard, adminAccounts, catalog, planSettings, grants] = await Promise.all([
-        getAdminDashboard(),
-        getAdminAccounts(),
+      const [dashboard, catalog, superAdminData] = await Promise.all([
+        getAdminDashboard(isSuperAdmin),
         getClientProducts(),
-        getAdminPlanSettings(),
-        isSuperAdmin ? getAdminProductGrants() : Promise.resolve({ items: [] }),
+        isSuperAdmin
+          ? Promise.all([
+              getAdminAccounts(),
+              getAdminPlanSettings(),
+              getAdminProductGrants(),
+            ])
+          : Promise.resolve(null),
       ]);
       setData(dashboard);
-      setAccounts(adminAccounts);
       setProducts(catalog);
-      setPlans(planSettings);
-      setProductGrants(grants.items);
+      setAccounts(superAdminData?.[0] ?? []);
+      setPlans(superAdminData?.[1] ?? []);
+      setProductGrants(superAdminData?.[2].items ?? []);
       setGrantsAsOf(Date.now());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load admin data.");
@@ -149,47 +158,16 @@ function AdminDashboard() {
   }, [isSuperAdmin]);
 
   useEffect(() => {
-    let mounted = true;
     if (role === "unknown") {
-      return () => {
-        mounted = false;
-      };
+      return;
     }
-    if (!isSuperAdmin) {
-      router.replace(role === "admin" ? "/admin/subscriptions" : "/");
-      return () => {
-        mounted = false;
-      };
+    if (role !== "admin" && role !== "super_admin") {
+      router.replace(role === "support" ? "/admin/subscriptions" : "/");
+      return;
     }
 
-    void Promise.all([
-      getAdminDashboard(),
-      getAdminAccounts(),
-      getClientProducts(),
-      getAdminPlanSettings(),
-      getAdminProductGrants(),
-    ])
-      .then(([dashboard, adminAccounts, catalog, planSettings, grants]) => {
-        if (!mounted) return;
-        setData(dashboard);
-        setAccounts(adminAccounts);
-        setProducts(catalog);
-        setPlans(planSettings);
-        setProductGrants(grants.items);
-        setGrantsAsOf(Date.now());
-      })
-      .catch((reason: unknown) => {
-        if (mounted) {
-          setError(reason instanceof Error ? reason.message : "Unable to load admin data.");
-        }
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [isSuperAdmin, role, router]);
+    void Promise.resolve().then(load);
+  }, [load, role, router]);
 
   async function runAction(action: () => Promise<unknown>, successMessage: string) {
     setBusy(true);
@@ -503,14 +481,16 @@ function AdminDashboard() {
                 Enterprise access
               </a>
             )}
-            <div className="pt-3">
-              <a href="#admins" className="px-3 text-xs font-bold uppercase tracking-widest text-slate-500">Admins</a>
-              <div className="mt-1 grid gap-1">
-                <a href="#admins" className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800/70">Admin List</a>
-                <a href="#create-admin" className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800/70">Create Admin</a>
-                <button onClick={() => selectedAdmin ? scrollToSection("admin-details") : scrollToSection("admins")} className="rounded-lg px-3 py-2 text-left text-slate-300 hover:bg-slate-800/70">Admin Details</button>
+            {isSuperAdmin && (
+              <div className="pt-3">
+                <a href="#admins" className="px-3 text-xs font-bold uppercase tracking-widest text-slate-500">Admins</a>
+                <div className="mt-1 grid gap-1">
+                  <a href="#admins" className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800/70">Admin List</a>
+                  <a href="#create-admin" className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800/70">Create Admin</a>
+                  <button onClick={() => selectedAdmin ? scrollToSection("admin-details") : scrollToSection("admins")} className="rounded-lg px-3 py-2 text-left text-slate-300 hover:bg-slate-800/70">Admin Details</button>
+                </div>
               </div>
-            </div>
+            )}
             <div className="pt-3">
               <a href="#subscriptions" className="px-3 text-xs font-bold uppercase tracking-widest text-slate-500">Subscriptions</a>
               <div className="mt-1 grid gap-1">
@@ -535,8 +515,12 @@ function AdminDashboard() {
                 ))}
               </div>
             </div>
-            <a href="#audit-logs" className="mt-3 rounded-lg px-3 py-2.5 text-slate-300 hover:bg-slate-800/70">Audit Logs</a>
-            <a href="#settings" className="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-slate-800/70">Settings</a>
+            {isSuperAdmin && (
+              <>
+                <a href="#audit-logs" className="mt-3 rounded-lg px-3 py-2.5 text-slate-300 hover:bg-slate-800/70">Audit Logs</a>
+                <a href="#settings" className="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-slate-800/70">Settings</a>
+              </>
+            )}
           </nav>
           <Link href="/dashboard" className="mt-8 inline-block px-3 text-sm font-semibold text-cyan-300 hover:text-cyan-200">← Client dashboard</Link>
         </aside>
@@ -576,7 +560,7 @@ function AdminDashboard() {
                 <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   {[
                     ["Clients", data.clients.length],
-                    ["Administrators", accounts.length],
+                    ...(isSuperAdmin ? [["Administrators", accounts.length]] : []),
                     ["Payments to review", pendingPaymentCount],
                     ["Active subscriptions", activeSubscriptionCount],
                   ].map(([label, value]) => (
@@ -624,7 +608,7 @@ function AdminDashboard() {
                     <input aria-label="Username" name="username" required minLength={3} maxLength={50} placeholder="Username" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
                     <input aria-label="Email" name="email" type="email" required placeholder="Email" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
                     <input aria-label="Contact name" name="display_name" required minLength={2} maxLength={100} placeholder="Contact name" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
-                    <input aria-label="Company or workspace" name="company_name" maxLength={200} placeholder="Company / workspace" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
+                    <input aria-label="Company or workspace" name="company_name" maxLength={200} defaultValue="Premium Cyber Prunk City (Yangon/Hledan)" placeholder="Company / workspace" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white placeholder:text-slate-500" />
                     <button disabled={busy} className="rounded-lg bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-50 sm:col-span-2 xl:col-span-4">Create account and show temporary password</button>
                   </form>
                 </section>
@@ -722,6 +706,8 @@ function AdminDashboard() {
                   </section>
                 )}
 
+                {isSuperAdmin && (
+                  <>
                 <section id="admins" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div><h2 className="text-lg font-bold text-white">Admin List</h2><p className="mt-1 text-sm text-slate-400">Review administrator accounts and enable or disable access.</p></div>
@@ -778,12 +764,15 @@ function AdminDashboard() {
                     </dl>
                   </section>
                 )}
+                  </>
+                )}
 
                 <section id="subscriptions" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><h2 className="text-lg font-bold text-white">Subscriptions</h2><p className="mt-1 text-sm text-slate-400">Manage client subscriptions, payment requests, renewals, and cancellations. Manual subscriptions grant access immediately and require an approval reason.</p></div>
+                    <div><h2 className="text-lg font-bold text-white">Subscriptions</h2><p className="mt-1 text-sm text-slate-400">Manage client subscriptions, payment requests, renewals, and cancellations.</p></div>
                     <label className="flex items-center gap-2 text-sm text-slate-400">Status<select value={subscriptionFilter} onChange={(event) => setSubscriptionFilter(event.target.value)} className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2 text-slate-100">{subscriptionStatuses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
                   </div>
+                  {isSuperAdmin && (
                   <form onSubmit={(event) => void submitAdminSubscription(event)} className="mt-5 grid gap-3 rounded-xl border border-slate-800 bg-[#080e18] p-4 sm:grid-cols-2 xl:grid-cols-5">
                     <label className="grid gap-1 text-xs text-slate-400">Client
                       <select name="tenant_id" required defaultValue="" className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white">
@@ -807,8 +796,9 @@ function AdminDashboard() {
                     <label className="grid gap-1 text-xs text-slate-400 sm:col-span-2">Approval reason
                       <input name="reason" minLength={3} maxLength={2000} required placeholder="Record the authorization for this manual subscription" className="rounded-lg border border-slate-700 bg-[#0d1726] px-3 py-2 text-sm text-white" />
                     </label>
-                    <button disabled={busy || !data.clients.some((client) => client.tenant_id !== null) || !plans.some((plan) => plan.is_active && products.some((product) => product.product_key === plan.product_key))} className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50 sm:justify-self-start">Create and activate</button>
+                    <button disabled={busy || !data.clients.some((client) => client.tenant_id !== null) || !plans.some((plan) => plan.is_active && products.some((product) => product.product_key === plan.product_key))} className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50 sm:justify-self-start">Submit manual subscription</button>
                   </form>
+                  )}
                   <div className="mt-5 overflow-x-auto">
                     <table className="w-full min-w-[980px] text-left text-sm">
                       <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Subscription</th><th>Tenant</th><th>Product</th><th>Amount</th><th>Status</th><th>Period ends</th><th className="text-right">Actions</th></tr></thead>
@@ -887,6 +877,8 @@ function AdminDashboard() {
                   </div>
                 </section>
 
+                {isSuperAdmin && (
+                  <>
                 <section id="audit-logs" className="scroll-mt-6 rounded-2xl border border-slate-800 bg-[#0d1726] p-6">
                   <h2 className="text-lg font-bold text-white">Audit Logs</h2>
                   <p className="mt-1 text-sm text-slate-400">Latest subscription and payment activity across tenants.</p>
@@ -920,6 +912,8 @@ function AdminDashboard() {
                     {!plans.length && <p className="text-sm text-slate-400">No subscription plans are configured.</p>}
                   </div>
                 </section>
+                  </>
+                )}
               </>
             )}
           </div>

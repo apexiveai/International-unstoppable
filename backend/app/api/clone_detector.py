@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.auth import get_current_user
+from app.core.authorization import can_bypass_product_entitlement
 from app.database import get_db
 from app.models import TrademarkConflictCheck, User
 from app.schemas.clone_detector import (
@@ -71,7 +72,12 @@ async def check_trademark_domain_availability(
             status_code=403,
             detail="User is not assigned to a tenant.",
         )
-    require_tenant_product_access(db, user.tenant_id, "trademark")
+    require_tenant_product_access(
+        db,
+        user.tenant_id,
+        "trademark",
+        is_admin=can_bypass_product_entitlement(user),
+    )
 
     try:
         return await check_domain_availability(payload.domain)
@@ -156,7 +162,12 @@ async def analyze_clone_documents(
             status_code=403,
             detail="User is not assigned to a tenant.",
         )
-    require_tenant_product_access(db, user.tenant_id, "trademark")
+    require_tenant_product_access(
+        db,
+        user.tenant_id,
+        "trademark",
+        is_admin=can_bypass_product_entitlement(user),
+    )
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -338,7 +349,12 @@ def list_trademark_checks(
 ):
     if user.tenant_id is None:
         raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
-    require_tenant_product_access(db, user.tenant_id, "trademark")
+    require_tenant_product_access(
+        db,
+        user.tenant_id,
+        "trademark",
+        is_admin=can_bypass_product_entitlement(user),
+    )
     total = db.scalar(
         select(func.count(TrademarkConflictCheck.id)).where(
             TrademarkConflictCheck.tenant_id == user.tenant_id
@@ -379,7 +395,12 @@ def get_trademark_check(
 ):
     if user.tenant_id is None:
         raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
-    require_tenant_product_access(db, user.tenant_id, "trademark")
+    require_tenant_product_access(
+        db,
+        user.tenant_id,
+        "trademark",
+        is_admin=can_bypass_product_entitlement(user),
+    )
     check = db.scalar(
         select(TrademarkConflictCheck).where(
             TrademarkConflictCheck.id == check_id,

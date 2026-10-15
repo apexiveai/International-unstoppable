@@ -16,8 +16,12 @@ from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import create_access_token, get_current_user
-from app.core.authorization import require_admin, require_subscription_operator
-from app.core.authorization import require_super_admin
+from app.core.authorization import (
+    can_bypass_product_entitlement,
+    require_admin,
+    require_subscription_operator,
+    require_super_admin,
+)
 from app.core.config import settings
 from app.database import get_db
 from app.models import (
@@ -42,6 +46,7 @@ from app.services.product_access import (
     build_product_response,
     product_is_published,
     require_product_key,
+    require_tenant_product_access,
     tenant_product_access,
 )
 
@@ -186,7 +191,13 @@ def get_product_access(
 ):
     require_product_key(product_key)
     tenant_id = _tenant_id(user)
-    access = _tenant_product_access(db, tenant_id, product_key)
+    access = (
+        require_tenant_product_access(
+            db, tenant_id, product_key, is_admin=user.is_admin
+        )
+        if can_bypass_product_entitlement(user)
+        else _tenant_product_access(db, tenant_id, product_key)
+    )
     return {
         **build_product_response(product_key),
         "tenant_id": tenant_id,
@@ -355,7 +366,13 @@ def create_product_launch_code(
 ):
     require_product_key(product_key)
     tenant_id = _tenant_id(user)
-    access = _tenant_product_access(db, tenant_id, product_key)
+    access = (
+        require_tenant_product_access(
+            db, tenant_id, product_key, is_admin=user.is_admin
+        )
+        if can_bypass_product_entitlement(user)
+        else _tenant_product_access(db, tenant_id, product_key)
+    )
     if not access["has_access"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -463,11 +480,14 @@ def exchange_product_launch_code(
         or not user.is_active
         or user.account_status != "ACTIVE"
         or user.tenant_id != launch_code.tenant_id
-        or not _tenant_product_access(
-            db,
-            launch_code.tenant_id,
-            launch_code.product_key,
-        )["has_access"]
+        or not (
+            can_bypass_product_entitlement(user)
+            or _tenant_product_access(
+                db,
+                launch_code.tenant_id,
+                launch_code.product_key,
+            )["has_access"]
+        )
     ):
         write_system_audit_event(
             db,

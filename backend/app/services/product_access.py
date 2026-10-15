@@ -316,7 +316,23 @@ def require_tenant_product_access(
     db: Session,
     tenant_id: int,
     product_key: str,
+    *,
+    is_admin: bool = False,
 ) -> dict[str, Any]:
+    if is_admin:
+        require_product_key(product_key)
+        return {
+            "has_access": True,
+            "source": None,
+            "grant_id": None,
+            "access_type": None,
+            "starts_at": None,
+            "expires_at": None,
+            "is_permanent": False,
+            "subscription_id": None,
+            "status": "active",
+            "current_period_end": None,
+        }
     access = tenant_product_access(db, tenant_id, product_key)
     if not access["has_access"]:
         raise HTTPException(

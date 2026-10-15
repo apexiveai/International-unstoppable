@@ -3,6 +3,10 @@ from fastapi import Depends, HTTPException, status
 from app.auth import get_current_user
 
 
+def can_bypass_product_entitlement(user) -> bool:
+    return user.is_admin and user.role.strip().upper() != "SUPPORT"
+
+
 def require_authenticated_user(current_user=Depends(get_current_user)):
     if not current_user.is_active:
         raise HTTPException(

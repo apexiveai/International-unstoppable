@@ -3,6 +3,7 @@ import hashlib
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import AsyncMock, Mock
 
 from fastapi.testclient import TestClient
@@ -85,6 +86,8 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             is_active=True,
             is_admin=True,
             is_super_admin=False,
+            role="ADMIN",
+            account_status="ACTIVE",
         )
         self.super_admin = User(
             username="root-admin",
@@ -254,6 +257,75 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         response = self.client.get("/api/subscriptions/access/trademark")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["has_access"])
+
+    def test_administrator_has_access_to_all_published_products(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+
+        trademark_access = self.client.get("/api/subscriptions/access/trademark")
+        workforce_access = self.client.get("/api/subscriptions/access/workforce")
+        launch = self.client.post("/api/subscriptions/products/trademark/launch")
+
+        self.assertEqual(trademark_access.status_code, 200, trademark_access.text)
+        self.assertTrue(trademark_access.json()["has_access"])
+        self.assertEqual(trademark_access.json()["status"], "active")
+        self.assertEqual(workforce_access.status_code, 200, workforce_access.text)
+        self.assertTrue(workforce_access.json()["has_access"])
+        self.assertEqual(launch.status_code, 200, launch.text)
+
+        access_code = parse_qs(urlsplit(launch.json()["url"]).query)["access_code"][0]
+        exchange = self.client.post(
+            "/api/subscriptions/launch/exchange",
+            json={"code": access_code},
+        )
+        self.assertEqual(exchange.status_code, 200, exchange.text)
+
+    def test_administrator_can_use_trademark_without_a_subscription(self):
+        api.dependency_overrides[get_current_user] = lambda: self.regular_admin
+        result = CloneDetectorResponse(
+            overall_similarity=0.0,
+            similarity_percent=0.0,
+            matching_area_count=0,
+            matched_points=0,
+            matches=[],
+            annotated_original=[],
+            original_page_count=0,
+            comparison_page_count=0,
+            engine={},
+        )
+
+        with patch("app.api.clone_detector.analyze_clone", return_value=result) as analyze:
+            response = self.client.post(
+                "/api/clone-detector/analyze",
+                files={
+                    "original": ("original.pdf", b"%PDF-1.4", "application/pdf"),
+                    "comparison": ("comparison.pdf", b"%PDF-1.4", "application/pdf"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        analyze.assert_called_once()
+        self.assertEqual(
+            self.client.get("/api/clone-detector/checks").status_code,
+            200,
+        )
+
+    def test_support_role_does_not_bypass_product_entitlement(self):
+        support = User(
+            id=987,
+            tenant_id=self.tenant_a.id,
+            is_active=True,
+            is_admin=True,
+            role="SUPPORT",
+            account_status="ACTIVE",
+        )
+        api.dependency_overrides[get_current_user] = lambda: support
+
+        access = self.client.get("/api/subscriptions/access/trademark")
+        detector = self.client.get("/api/clone-detector/checks")
+
+        self.assertEqual(access.status_code, 200)
+        self.assertFalse(access.json()["has_access"])
+        self.assertEqual(detector.status_code, 403)
 
     def test_detector_rejects_unauthenticated_requests(self):
         api.dependency_overrides.pop(get_current_user, None)

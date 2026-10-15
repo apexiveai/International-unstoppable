@@ -188,12 +188,14 @@ async function adminRequest<T>(
   return response.json() as Promise<T>;
 }
 
-export async function getAdminDashboard() {
+export async function getAdminDashboard(includeAuditLogs = true) {
   const [clients, payments, subscriptions, auditLogs] = await Promise.all([
     adminRequest<{ clients: AdminClient[] }>("/api/admin/clients"),
     adminRequest<{ items: AdminPayment[] }>("/api/admin/payments?limit=500"),
     adminRequest<{ items: AdminSubscription[] }>("/api/admin/subscriptions?limit=500"),
-    adminRequest<AdminAuditLog[]>("/api/admin/audit-logs?limit=500"),
+    includeAuditLogs
+      ? adminRequest<AdminAuditLog[]>("/api/admin/audit-logs?limit=500")
+      : Promise.resolve([]),
   ]);
   return {
     clients: clients.clients,
