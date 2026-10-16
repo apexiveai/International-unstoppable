@@ -770,25 +770,61 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertEqual(history.json()["total"], 1)
         self.assertEqual(history.json()["items"][0]["similarity_percent"], 50.0)
 
-    def test_ordinary_admin_cannot_create_a_manual_trademark_subscription(self):
+    def test_manual_trademark_subscription_grants_access_after_super_admin_approval(self):
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin
 
         response = self.client.post(
             "/api/admin/subscriptions",
             json={
-                "tenant_id": self.tenant_b.id,
+                "tenant_id": self.tenant_a.id,
                 "plan_id": self.plan.id,
                 "duration_days": 240,
                 "reason": "Approved enterprise subscription",
             },
         )
 
-        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.status_code, 201, response.text)
+        subscription_id = response.json()["id"]
+        self.assertEqual(response.json()["status"], "pending")
         self.assertFalse(
-            tenant_product_access(self.db, self.tenant_b.id, "trademark")[
+            tenant_product_access(self.db, self.tenant_a.id, "trademark")[
                 "has_access"
             ]
         )
+        self.assertEqual(
+            self.client.post(
+                f"/api/admin/subscriptions/{subscription_id}/approve-manual"
+            ).status_code,
+            403,
+        )
+
+        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+        with (
+            patch("app.api.subscriptions.queue_tenant_notification"),
+            patch("app.api.subscriptions.send_tenant_subscription_email"),
+        ):
+            approval = self.client.post(
+                f"/api/admin/subscriptions/{subscription_id}/approve-manual"
+            )
+
+        self.assertEqual(approval.status_code, 200, approval.text)
+        self.assertEqual(approval.json()["status"], "active")
+        self.assertEqual(self.db.query(Payment).count(), 0)
+        access = tenant_product_access(self.db, self.tenant_a.id, "trademark")
+        self.assertTrue(access["has_access"])
+        self.assertEqual(access["source"], "subscription")
+        api.dependency_overrides[get_current_user] = lambda: self.user
+        launch = self.client.post(
+            "/api/subscriptions/products/trademark/launch"
+        )
+        self.assertEqual(launch.status_code, 200, launch.text)
+        access_code = parse_qs(urlsplit(launch.json()["url"]).query)["access_code"][0]
+        exchange = self.client.post(
+            "/api/subscriptions/launch/exchange",
+            json={"code": access_code},
+        )
+        self.assertEqual(exchange.status_code, 200, exchange.text)
+        self.assertEqual(exchange.json()["product_key"], "trademark")
 
     def test_customer_cannot_create_a_manual_subscription(self):
         response = self.client.post(

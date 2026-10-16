@@ -115,6 +115,7 @@ export default function LoginPage() {
           JSON.stringify(data.user),
 
         );
+        window.dispatchEvent(new Event("apexive-auth-changed"));
 
         const next =
           params.get("next") ||
@@ -339,9 +340,13 @@ export default function LoginPage() {
       );
 
       localStorage.setItem(
+
         "apexive_user",
+
         JSON.stringify(data.user),
+
       );
+      window.dispatchEvent(new Event("apexive-auth-changed"));
 
       const params = new URLSearchParams(
         window.location.search,

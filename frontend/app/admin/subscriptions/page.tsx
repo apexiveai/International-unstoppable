@@ -591,7 +591,7 @@ function AdminSubscriptionsDashboard() {
             <section className="rounded-2xl border border-slate-800 bg-[#0d1726] p-5">
               <h2 className="text-lg font-semibold">Create manual subscription</h2>
               <p className="mt-1 text-sm text-slate-400">
-                Requests remain pending until a Super Admin approves them. Trademark access always requires verified payment.
+                Requests remain pending until a Super Admin approves them. Trademark Conflict access can be approved manually without payment verification; access expires after the selected duration.
               </p>
               <form
                 onSubmit={(event) => void submitSubscription(event)}
@@ -676,7 +676,7 @@ function AdminSubscriptionsDashboard() {
                   disabled={busy || !clients.length || !plans.length}
                   className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50 md:justify-self-start"
                 >
-                  Create and activate
+                  Submit for approval
                 </button>
               </form>
             </section>

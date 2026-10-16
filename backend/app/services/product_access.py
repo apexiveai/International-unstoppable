@@ -266,10 +266,7 @@ def tenant_product_access(
         and can_access_product(active_subscription, product_key)
         and (
             verified_payment is not None
-            or (
-                product_key != "trademark"
-                and active_subscription.admin_access_reason is not None
-            )
+            or active_subscription.admin_access_reason is not None
         )
     )
     grant = db.scalar(

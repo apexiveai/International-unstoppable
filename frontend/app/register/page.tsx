@@ -200,6 +200,7 @@ export default function RegisterPage() {
         JSON.stringify(data.user),
 
       );
+      window.dispatchEvent(new Event("apexive-auth-changed"));
 
       if (faceSessionId) {
         sessionStorage.removeItem(PENDING_FACE_REGISTRATION_KEY);

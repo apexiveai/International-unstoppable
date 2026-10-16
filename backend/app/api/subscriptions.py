@@ -1296,12 +1296,6 @@ def admin_create_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is not published for subscription access.",
         )
-    if plan.code == "TRADEMARK_CONFLICT":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Trademark Conflict access must be approved through payment verification.",
-        )
-
     if payload.client_id is not None:
         client = db.get(User, payload.client_id)
         if client is None or client.is_admin:
@@ -1381,11 +1375,6 @@ def approve_manual_subscription(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending manual subscriptions can be approved.",
-        )
-    if subscription.plan.code == "TRADEMARK_CONFLICT":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Trademark Conflict access requires verified payment.",
         )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     if subscription.current_period_end is None or subscription.current_period_end <= now:
