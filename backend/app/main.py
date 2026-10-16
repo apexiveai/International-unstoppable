@@ -23,6 +23,7 @@ from app.api.client_management import router as client_management_router
 from app.api import payments
 from app.api.subscriptions import router as subscriptions_router
 from app.api.client_products import router as client_products_router
+from app.api.licenses import router as licenses_router
 
 
 api = FastAPI(
@@ -57,6 +58,7 @@ api.include_router(search_router)
 api.include_router(payments.router)
 api.include_router(subscriptions_router)
 api.include_router(client_products_router)
+api.include_router(licenses_router)
 
 @api.get("/health")
 def health():
@@ -73,6 +75,7 @@ app = CORSMiddleware(
         "https://apexiveai.com",
         "https://trademark.apexiveai.com",
         "https://apexiveai-detector-v1-1.vercel.app",
+        "https://apexiveai-rpa-gules.vercel.app",
     ]
     + [
         origin.strip().rstrip("/")

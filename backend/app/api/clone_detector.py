@@ -58,6 +58,24 @@ ALLOWED_EXTENSIONS = {
 }
 
 
+def _require_trademark_access(db: Session, user: User) -> int | None:
+    if user.tenant_id is None:
+        if can_bypass_product_entitlement(user):
+            return None
+        raise HTTPException(
+            status_code=403,
+            detail="User is not assigned to a tenant.",
+        )
+
+    require_tenant_product_access(
+        db,
+        user.tenant_id,
+        "trademark",
+        is_admin=can_bypass_product_entitlement(user),
+    )
+    return user.tenant_id
+
+
 @router.post(
     "/domains/availability",
     response_model=SpaceshipDomainAvailabilityResponse,
@@ -67,17 +85,7 @@ async def check_trademark_domain_availability(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.tenant_id is None:
-        raise HTTPException(
-            status_code=403,
-            detail="User is not assigned to a tenant.",
-        )
-    require_tenant_product_access(
-        db,
-        user.tenant_id,
-        "trademark",
-        is_admin=can_bypass_product_entitlement(user),
-    )
+    _require_trademark_access(db, user)
 
     try:
         return await check_domain_availability(payload.domain)
@@ -157,17 +165,7 @@ async def analyze_clone_documents(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.tenant_id is None:
-        raise HTTPException(
-            status_code=403,
-            detail="User is not assigned to a tenant.",
-        )
-    require_tenant_product_access(
-        db,
-        user.tenant_id,
-        "trademark",
-        is_admin=can_bypass_product_entitlement(user),
-    )
+    tenant_id = _require_trademark_access(db, user)
 
     content_length = request.headers.get("content-length")
     if content_length:
@@ -315,8 +313,11 @@ async def analyze_clone_documents(
             ),
         ) from exc
 
+    if tenant_id is None:
+        return result
+
     check = TrademarkConflictCheck(
-        tenant_id=user.tenant_id,
+        tenant_id=tenant_id,
         user_id=user.id,
         original_filename=(original.filename or "original")[:255],
         comparison_filename=(comparison.filename or "comparison")[:255],
@@ -326,7 +327,7 @@ async def analyze_clone_documents(
     db.flush()
     write_audit_log(
         db,
-        tenant_id=user.tenant_id,
+        tenant_id=tenant_id,
         actor_user_id=user.id,
         action="trademark_conflict.check_created",
         target_type="trademark_conflict_check",
@@ -347,22 +348,24 @@ def list_trademark_checks(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.tenant_id is None:
-        raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
-    require_tenant_product_access(
-        db,
-        user.tenant_id,
-        "trademark",
-        is_admin=can_bypass_product_entitlement(user),
-    )
+    tenant_id = _require_trademark_access(db, user)
+    if tenant_id is None:
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "page_size": HISTORY_PAGE_SIZE,
+            "pages": 0,
+        }
+
     total = db.scalar(
         select(func.count(TrademarkConflictCheck.id)).where(
-            TrademarkConflictCheck.tenant_id == user.tenant_id
+            TrademarkConflictCheck.tenant_id == tenant_id
         )
     ) or 0
     checks = db.scalars(
         select(TrademarkConflictCheck)
-        .where(TrademarkConflictCheck.tenant_id == user.tenant_id)
+        .where(TrademarkConflictCheck.tenant_id == tenant_id)
         .order_by(desc(TrademarkConflictCheck.created_at), desc(TrademarkConflictCheck.id))
         .offset((page - 1) * HISTORY_PAGE_SIZE)
         .limit(HISTORY_PAGE_SIZE)
@@ -393,18 +396,14 @@ def get_trademark_check(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if user.tenant_id is None:
-        raise HTTPException(status_code=403, detail="User is not assigned to a tenant.")
-    require_tenant_product_access(
-        db,
-        user.tenant_id,
-        "trademark",
-        is_admin=can_bypass_product_entitlement(user),
-    )
+    tenant_id = _require_trademark_access(db, user)
+    if tenant_id is None:
+        raise HTTPException(status_code=404, detail="Trademark Conflict check not found.")
+
     check = db.scalar(
         select(TrademarkConflictCheck).where(
             TrademarkConflictCheck.id == check_id,
-            TrademarkConflictCheck.tenant_id == user.tenant_id,
+            TrademarkConflictCheck.tenant_id == tenant_id,
         )
     )
     if check is None:

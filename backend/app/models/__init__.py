@@ -36,6 +36,7 @@ from app.models.payment import Payment
 from app.models.product_grant import ProductAccessGrant, ProductLaunchCode
 from app.models.security_audit_event import SystemAuditEvent
 from app.models.trademark import TrademarkConflictCheck
+from app.models.license import License, LicenseActivation, LicenseEvent, LicensePlan
 
 __all__ = [
     "User",
@@ -75,6 +76,10 @@ __all__ = [
     "Execution",
     "ExecutionEvent",
     "TrademarkConflictCheck",
+    "LicensePlan",
+    "License",
+    "LicenseActivation",
+    "LicenseEvent",
 
     "Notification",
 ]

@@ -117,6 +117,8 @@ const productNames: Record<string, string> = {
 
   trademark: "Trademark Conflict",
 
+  rpa: "Apexive MPT RPA",
+
   network: "Network Design & Quotation",
 
   workforce: "Autonomous Workforce",

@@ -15,6 +15,9 @@ Set these service environment variables in Render:
 - `DATABASE_URL`: the production PostgreSQL connection string.
 - `JWT_SECRET`: a newly generated, private random secret. Never use a checked-in
   example or development value.
+- `RPA_LICENSE_SERVICE_TOKEN`: a high-entropy private secret shared only with
+  the RPA backend. Configure the identical value as `LICENSE_SERVICE_TOKEN`
+  there; do not expose it to the browser.
 - `FRONTEND_URL`:
   `https://www.apexiveai.com,https://trademark.apexiveai.com,https://apexiveai-detector-v1-1.vercel.app`.
   Separate allowed frontend origins with commas so the Next.js site and both
@@ -31,15 +34,15 @@ Set the Vercel project's **Root Directory** to `frontend`, then configure:
 - `NEXT_PUBLIC_API_URL`: `https://international-unstoppable.onrender.com`
 - `NEXT_PUBLIC_SITE_URL`: `https://www.apexiveai.com`
 - `NEXT_PUBLIC_TRADEMARK_DETECTOR_URL`:
-  `https://trademark.apexiveai.com` (the Vite deployment at
-  `https://apexiveai-detector-v1-1.vercel.app/`).
+  `https://apexiveai-detector-v1-1.vercel.app` (the Vite deployment).
 
 Set any other `NEXT_PUBLIC_*` values required by the feature using them, then
 redeploy so Next.js includes the values in the frontend build.
 
 Configure the Vite Detector deployment's `APEXIVE_API_URL` to
-`https://international-unstoppable.onrender.com`. Its custom domain and the
-Vercel deployment URL should serve the same Detector application.
+`https://international-unstoppable.onrender.com`. The custom domain is
+currently returning a Railway 404; use the Vercel deployment URL until DNS and
+domain routing for `trademark.apexiveai.com` are corrected.
 
 ## Domain routing
 

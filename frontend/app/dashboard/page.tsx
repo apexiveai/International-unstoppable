@@ -28,7 +28,7 @@ function ClientDashboard() {
     setError("");
     setOpeningProduct(product.product_key);
     try {
-      if (product.product_key === "trademark") {
+      if (product.product_key === "trademark" || product.product_key === "rpa") {
         const launch = await createProductLaunch(product.product_key);
         window.location.assign(launch.url);
         return;

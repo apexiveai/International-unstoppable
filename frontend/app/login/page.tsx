@@ -118,11 +118,7 @@ export default function LoginPage() {
 
         const next =
           params.get("next") ||
-          (data.user?.is_admin
-            ? data.user.is_super_admin
-              ? "/admin"
-              : "/admin/subscriptions"
-            : "/");
+          (data.user?.is_admin ? "/trademark-intelligence" : "/");
         router.replace(next);
 
       } catch (verificationError: unknown) {
@@ -354,9 +350,7 @@ export default function LoginPage() {
       const next =
         params.get("next") ||
         (data.user?.is_admin
-          ? data.user.is_super_admin
-            ? "/admin"
-            : "/admin/subscriptions"
+          ? "/trademark-intelligence"
           : "/");
 
       router.replace(next);
@@ -411,7 +405,7 @@ export default function LoginPage() {
 
             type="text"
 
-            autoCapitalize="none"
+            autoCapitalize="off"
 
             autoCorrect="off"
 
@@ -427,7 +421,8 @@ export default function LoginPage() {
 
             required
 
-            className="mt-2 w-full rounded-lg border border-transparent bg-[#e8f0ff] px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="mt-2 w-full rounded-lg border border-transparent bg-[#e8f0ff] px-4 py-3 text-sm text-slate-950 placeholder:text-slate-400 selection:bg-sky-200 selection:text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            style={{ fontVariantCaps: "normal", textTransform: "none" }}
 
           />
 
@@ -441,7 +436,7 @@ export default function LoginPage() {
 
             type="password"
 
-            autoCapitalize="none"
+            autoCapitalize="off"
 
             value={password}
 
@@ -455,7 +450,8 @@ export default function LoginPage() {
 
             required
 
-            className="mt-2 w-full rounded-lg border border-transparent bg-[#e8f0ff] px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="mt-2 w-full rounded-lg border border-transparent bg-[#e8f0ff] px-4 py-3 text-sm text-slate-950 placeholder:text-slate-400 selection:bg-sky-200 selection:text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            style={{ fontVariantCaps: "normal", textTransform: "none" }}
 
           />
 

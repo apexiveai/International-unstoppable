@@ -5,7 +5,7 @@ PRODUCT_CATALOG = [
         "product_key": "trademark",
         "name": "Trademark Conflict",
         "slug": "trademark",
-        "url": "https://trademark.apexiveai.com",
+        "url": "https://apexiveai-detector-v1-1.vercel.app",
 
         "description": (
             "AI-powered trademark visual conflict "
@@ -42,7 +42,6 @@ PRODUCT_CATALOG = [
     },
 
     {
-
         "product_key": "mna",
 
         "name": "MYANMAR NATIONAL AIRLINES",
@@ -59,6 +58,16 @@ PRODUCT_CATALOG = [
 
         ),
 
+    },
+
+    {
+        "product_key": "rpa",
+        "name": "Apexive MPT RPA",
+        "slug": "rpa",
+        "url": "https://apexiveai-rpa-gules.vercel.app",
+        "description": (
+            "Enterprise robotic process automation studio and workflow execution."
+        ),
     },
 
 ]

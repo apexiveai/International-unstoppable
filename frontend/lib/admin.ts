@@ -145,6 +145,52 @@ export type AdminProductGrant = {
   revoked_by_id: number | null;
 };
 
+export type AdminLicensePlan = {
+  id: number;
+  name: string;
+  description: string;
+  price: string;
+  currency: string;
+  duration_days: number;
+  max_robots: number;
+  max_workflows: number;
+  max_activations: number;
+  features: Record<string, boolean>;
+  is_active: boolean;
+};
+
+export type AdminLicenseActivation = {
+  id: number;
+  device_id: string;
+  device_name: string;
+  activated_at: string;
+  last_verified_at: string;
+  deactivated_at: string | null;
+  is_active: boolean;
+};
+
+export type AdminLicense = {
+  id: number;
+  tenant_id: number | null;
+  tenant_name: string | null;
+  plan_id: number;
+  plan_name: string | null;
+  status: string;
+  starts_at: string;
+  expires_at: string;
+  price: string;
+  currency: string;
+  created_at: string;
+  activations: AdminLicenseActivation[];
+  events: Array<{
+    id: number;
+    actor_user_id: number | null;
+    event_type: string;
+    details: Record<string, unknown>;
+    created_at: string;
+  }>;
+};
+
 async function adminRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -505,4 +551,98 @@ export function updateAdminSubscriptionPrice(
       body: JSON.stringify({ price }),
     },
   );
+}
+
+export function getAdminLicensePlans() {
+  return adminRequest<AdminLicensePlan[]>("/api/admin/licenses/plans");
+}
+
+export function createAdminLicensePlan(payload: {
+  name: string;
+  description: string;
+  price: string;
+  currency: string;
+  duration_days: number;
+  max_robots: number;
+  max_workflows: number;
+  max_activations: number;
+  features: Record<string, boolean>;
+}) {
+  return adminRequest<{ id: number; name: string; is_active: boolean }>(
+    "/api/admin/licenses/plans",
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function getAdminLicenses() {
+  return adminRequest<{ items: AdminLicense[] }>("/api/admin/licenses");
+}
+
+export function createAdminLicense(payload: {
+  plan_id: number;
+  tenant_id: number | null;
+}) {
+  return adminRequest<{ license: AdminLicense; license_key: string }>(
+    "/api/admin/licenses",
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function assignAdminLicenseCustomer(licenseId: number, tenantId: number) {
+  return adminRequest<AdminLicense>(
+    `/api/admin/licenses/${licenseId}/customer`,
+    { method: "PATCH", body: JSON.stringify({ tenant_id: tenantId }) },
+  );
+}
+
+export function extendAdminLicense(licenseId: number, days: number) {
+  return adminRequest<AdminLicense>(`/api/admin/licenses/${licenseId}/extend`, {
+    method: "POST",
+    body: JSON.stringify({ days }),
+  });
+}
+
+export function changeAdminLicenseStatus(
+  licenseId: number,
+  status: "active" | "suspended" | "revoked",
+) {
+  return adminRequest<AdminLicense>(`/api/admin/licenses/${licenseId}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function deactivateAdminLicenseActivation(activationId: number) {
+  return adminRequest<{ id: number; is_active: boolean }>(
+    `/api/admin/licenses/activations/${activationId}/deactivate`,
+    { method: "POST" },
+  );
+}
+
+export function getAdminLicenseRenewals(withinDays = 30) {
+  return adminRequest<{ items: AdminLicense[] }>(
+    `/api/admin/licenses/renewals?within_days=${withinDays}`,
+  );
+}
+
+export function sendAdminLicenseRenewalAlerts() {
+  return adminRequest<{
+    licenses_notified: number;
+    notifications_created: number;
+    email_attempts: number;
+    email_failures: number;
+  }>("/api/admin/licenses/renewals/send", { method: "POST" });
+}
+
+export function getAdminLicenseReports() {
+  return adminRequest<{
+    total_licenses: number;
+    active_licenses: number;
+    expired_licenses: number;
+    issued_value_by_currency: Array<{
+      currency: string;
+      amount: string;
+      licenses: number;
+    }>;
+  }>("/api/admin/licenses/reports");
 }

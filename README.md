@@ -13,7 +13,10 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 You are integrating **Didit KYC (identity verification)**. Use a KYC workflow id.
 https://verify.didit.me/session/dLa60AsDfHDE
 (.venv) C:\Users\naing\Desktop\Sales\apexive-com\backend>railway connect
+BHONE HTET NAING
 
+apexiveai@aol.com
+f5Njav6yhmHqNr^1v8
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8099
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --reload

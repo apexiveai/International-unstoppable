@@ -73,6 +73,64 @@ export default function PhaseOnePage() {
 
         </p>
 
+        <section className="mt-10">
+
+          <p className="mb-4 text-xs font-black uppercase tracking-[0.18em] text-blue-600">
+
+            Automation
+
+          </p>
+
+          <Link
+
+            href="/pricing?product=rpa"
+
+            className="group flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:border-blue-300 hover:shadow-xl sm:flex-row sm:items-center sm:justify-between"
+
+          >
+
+            <div>
+
+              <div className="flex flex-wrap items-center gap-3">
+
+                <h2 className="text-xl font-black text-[#172033]">
+
+                  Apexive RPA
+
+                </h2>
+
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+
+                  MMK 2,000,000 / month
+
+                </span>
+
+              </div>
+
+              <p className="mt-2 text-sm font-semibold text-slate-500">
+
+                Robotic Process Automation
+
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+
+                Open the Apexive RPA workspace for automated business processes.
+
+              </p>
+
+            </div>
+
+            <span className="shrink-0 text-sm font-black text-blue-600 transition-transform group-hover:translate-x-1">
+
+              View plan →
+
+            </span>
+
+          </Link>
+
+        </section>
+
         {/* Telecom Power Monitoring */}
 
         <section className="mt-12">

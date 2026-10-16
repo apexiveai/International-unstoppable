@@ -231,12 +231,62 @@ class SubscriptionEntitlementTests(unittest.TestCase):
         self.assertFalse(subscription_is_active(expired))
         self.assertFalse(subscription_is_active(future))
 
-    def test_trademark_complimentary_grant_does_not_bypass_payment_requirement(self):
+    def test_trademark_complimentary_grant_allows_access_without_changing_payment(self):
         self.add_grant()
         self.db.commit()
         access = tenant_product_access(self.db, self.tenant_a.id, "trademark")
-        self.assertFalse(access["has_access"])
-        self.assertIsNone(access["source"])
+        self.assertTrue(access["has_access"])
+        self.assertEqual(access["source"], "enterprise_grant")
+        self.assertIsNone(access["subscription_id"])
+
+    def test_super_admin_grants_trademark_and_workforce_access_to_tenant(self):
+        api.dependency_overrides[get_current_user] = lambda: self.super_admin
+        starts_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        expires_at = starts_at + timedelta(days=30)
+
+        for product_key in ("trademark", "workforce"):
+            grant_response = self.client.post(
+                "/api/admin/product-grants",
+                json={
+                    "tenant_id": self.tenant_a.id,
+                    "product_key": product_key,
+                    "access_type": "complimentary",
+                    "starts_at": starts_at.isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                    "is_permanent": False,
+                    "reason": "Approved account access",
+                },
+            )
+            self.assertEqual(grant_response.status_code, 201, grant_response.text)
+
+        api.dependency_overrides[get_current_user] = lambda: self.user
+        for product_key in ("trademark", "workforce"):
+            access_response = self.client.get(
+                f"/api/subscriptions/access/{product_key}"
+            )
+            self.assertEqual(access_response.status_code, 200, access_response.text)
+            self.assertTrue(access_response.json()["has_access"])
+            self.assertEqual(access_response.json()["source"], "enterprise_grant")
+
+            launch_response = self.client.post(
+                f"/api/subscriptions/products/{product_key}/launch"
+            )
+            self.assertEqual(launch_response.status_code, 200, launch_response.text)
+            access_code = parse_qs(
+                urlsplit(launch_response.json()["url"]).query
+            )["access_code"][0]
+            exchange_response = self.client.post(
+                "/api/subscriptions/launch/exchange",
+                json={"code": access_code},
+            )
+            self.assertEqual(exchange_response.status_code, 200, exchange_response.text)
+            self.assertEqual(exchange_response.json()["product_key"], product_key)
+
+        self.assertFalse(
+            tenant_product_access(self.db, self.tenant_b.id, "trademark")[
+                "has_access"
+            ]
+        )
 
     def test_expired_revoked_and_not_yet_started_grants_are_denied(self):
         self.add_grant(ends_delta=timedelta(seconds=-1))
@@ -278,6 +328,37 @@ class SubscriptionEntitlementTests(unittest.TestCase):
             json={"code": access_code},
         )
         self.assertEqual(exchange.status_code, 200, exchange.text)
+
+    def test_administrator_without_tenant_gets_workspace_for_product_access(self):
+        tenantless_admin = User(
+            username="tenantless-admin",
+            email="tenantless-admin@example.test",
+            password_hash="not-used",
+            display_name="Tenantless Admin",
+            is_active=True,
+            is_admin=True,
+            is_super_admin=False,
+            role="ADMIN",
+            account_status="ACTIVE",
+        )
+        self.db.add(tenantless_admin)
+        self.db.commit()
+        api.dependency_overrides[get_current_user] = lambda: tenantless_admin
+
+        access = self.client.get("/api/subscriptions/access/workforce")
+        self.assertEqual(access.status_code, 200, access.text)
+        self.assertTrue(access.json()["has_access"])
+        self.assertIsNotNone(tenantless_admin.tenant_id)
+
+        launch = self.client.post("/api/subscriptions/products/workforce/launch")
+        self.assertEqual(launch.status_code, 200, launch.text)
+        access_code = parse_qs(urlsplit(launch.json()["url"]).query)["access_code"][0]
+        exchange = self.client.post(
+            "/api/subscriptions/launch/exchange",
+            json={"code": access_code},
+        )
+        self.assertEqual(exchange.status_code, 200, exchange.text)
+        self.assertEqual(exchange.json()["tenant_id"], tenantless_admin.tenant_id)
 
     def test_administrator_can_use_trademark_without_a_subscription(self):
         api.dependency_overrides[get_current_user] = lambda: self.regular_admin

@@ -14,6 +14,7 @@ export const siteNavigationGroups = [
     links: [
       { label: "Trademark Conflict", href: "/trademark-intelligence" },
       { label: "Workforce", href: "/workforce" },
+      { label: "Apexive MPT RPA", href: "/pricing?product=rpa" },
       { label: "Phase 1", href: "/phase-1" },
     ],
   },

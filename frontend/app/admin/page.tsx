@@ -124,6 +124,7 @@ function AdminDashboard() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [passwordCopied, setPasswordCopied] = useState(false);
   const [selectedClient, setSelectedClient] = useState<AdminClient | null>(null);
   const [selectedAdmin, setSelectedAdmin] = useState<AdminAccount | null>(null);
   const [paymentFilter, setPaymentFilter] = useState<string>("pending");
@@ -175,6 +176,7 @@ function AdminDashboard() {
     setError("");
     setNotice("");
     setTemporaryPassword("");
+    setPasswordCopied(false);
     try {
       await action();
       setNotice(successMessage);
@@ -194,6 +196,7 @@ function AdminDashboard() {
     setError("");
     setNotice("");
     setTemporaryPassword("");
+    setPasswordCopied(false);
     try {
       const result = await createAdminClient({
         username: String(form.get("username") ?? ""),
@@ -220,6 +223,7 @@ function AdminDashboard() {
     setError("");
     setNotice("");
     setTemporaryPassword("");
+    setPasswordCopied(false);
     try {
       const result = await createAdminAccount({
         username: String(form.get("username") ?? ""),
@@ -285,6 +289,8 @@ function AdminDashboard() {
     setBusy(true);
     setError("");
     setNotice("");
+    setTemporaryPassword("");
+    setPasswordCopied(false);
     try {
       const result = await resetAdminClientPassword(client.id);
       setTemporaryPassword(result.temporary_password);
@@ -294,6 +300,21 @@ function AdminDashboard() {
       setError(reason instanceof Error ? reason.message : "Unable to reset client password.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function copyTemporaryPassword() {
+    if (!temporaryPassword) return;
+    try {
+      await navigator.clipboard.writeText(temporaryPassword);
+      setPasswordCopied(true);
+      setError("");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? `Could not copy the temporary password: ${reason.message}`
+          : "Could not copy the temporary password.",
+      );
     }
   }
 
@@ -535,6 +556,7 @@ function AdminDashboard() {
                 <p className="mt-2 text-sm text-slate-400">Manage clients, administrators, subscriptions, payments, products, and platform settings.</p>
               </div>
               <button onClick={() => void load()} disabled={busy || loading} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50">Refresh data</button>
+              <Link href="/admin/licenses" className="rounded-lg border border-cyan-400/30 px-4 py-2 text-sm font-semibold text-cyan-200 hover:bg-cyan-400/10">License Management</Link>
             </div>
           </header>
 
@@ -547,9 +569,25 @@ function AdminDashboard() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p>{notice}</p>
-                    {temporaryPassword && <p className="mt-2 break-all font-mono font-bold">Temporary password: {temporaryPassword}</p>}
+                    {temporaryPassword && (
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <p className="break-all font-mono font-bold">
+                          Temporary password: {temporaryPassword}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void copyTemporaryPassword()}
+                          className="rounded-md border border-emerald-300/40 px-3 py-1.5 text-xs font-bold text-emerald-100 hover:bg-emerald-300/10"
+                        >
+                          {passwordCopied ? "Copied" : "Copy password"}
+                        </button>
+                        <p className="text-xs text-emerald-100/80">
+                          Save it now. It cannot be viewed again; reset it to create a new one.
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  <button onClick={() => { setNotice(""); setTemporaryPassword(""); }} aria-label="Dismiss notification" className="text-lg leading-none text-emerald-100">×</button>
+                  <button onClick={() => { setNotice(""); setTemporaryPassword(""); setPasswordCopied(false); }} aria-label="Dismiss notification" className="text-lg leading-none text-emerald-100">×</button>
                 </div>
               </div>
             )}
@@ -639,7 +677,7 @@ function AdminDashboard() {
                     <div>
                       <h2 className="text-lg font-bold text-white">Enterprise product permissions</h2>
                       <p className="mt-1 text-sm text-slate-400">
-                        Grant a tenant a dated trial or complimentary access. Permanent access is available only as an explicit complimentary grant. Grants take effect automatically at their start time, expire automatically, and can be revoked at any time.
+                        Grant a tenant dated trial or complimentary access to Trademark Conflict, Autonomous Workforce, or RPA without changing payment status. Permanent access is available only as an explicit complimentary grant. Grants take effect automatically at their start time, expire automatically, and can be revoked at any time.
                       </p>
                     </div>
                     <form onSubmit={submitProductGrant} className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -654,6 +692,7 @@ function AdminDashboard() {
                       <select aria-label="Product" name="product_key" required defaultValue="trademark" className="rounded-lg border border-slate-700 bg-[#080e18] px-3 py-2.5 text-sm text-white">
                         <option value="trademark">Trademark Conflict</option>
                         <option value="workforce">Autonomous Workforce Agent</option>
+                        <option value="rpa">Apexive MPT RPA</option>
                       </select>
                       <select aria-label="Grant type" name="access_type" value={grantType} onChange={(event) => {
                         const value = event.target.value;

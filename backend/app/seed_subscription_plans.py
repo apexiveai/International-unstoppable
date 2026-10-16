@@ -32,6 +32,16 @@ PLANS = [
 
     },
 
+    {
+        "code": "APEXIVE_MPT_RPA",
+        "product_key": "rpa",
+        "name": "Apexive MPT RPA",
+        "description": "Monthly access to the Apexive MPT robotic process automation studio.",
+        "monthly_price": Decimal("2000000.00"),
+        "currency": "MMK",
+        "billing_cycle": "monthly",
+    },
+
 ]
 
 def seed():

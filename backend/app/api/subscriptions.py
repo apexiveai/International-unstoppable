@@ -53,13 +53,31 @@ from app.services.product_access import (
 router = APIRouter(prefix="/api", tags=["Subscriptions"])
 
 
-def _tenant_id(user: User) -> int:
-    if user.tenant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not assigned to a tenant.",
+def _tenant_id(user: User, db: Session) -> int:
+    if user.tenant_id is not None:
+        return user.tenant_id
+    if can_bypass_product_entitlement(user):
+        slug = f"admin-{user.id}-workspace"
+        tenant = db.scalar(select(Tenant).where(Tenant.slug == slug))
+        if tenant is None:
+            tenant = Tenant(
+                name=f"{user.display_name} Workspace",
+                slug=slug,
+            )
+            db.add(tenant)
+            db.flush()
+        db.execute(
+            update(User)
+            .where(User.id == user.id, User.tenant_id.is_(None))
+            .values(tenant_id=tenant.id)
         )
-    return user.tenant_id
+        db.commit()
+        user.tenant_id = tenant.id
+        return tenant.id
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User is not assigned to a tenant.",
+    )
 
 
 def _serialize_subscription(subscription: Subscription) -> dict:
@@ -158,7 +176,7 @@ def get_my_subscriptions(
     subscriptions = db.scalars(
         select(Subscription)
         .options(joinedload(Subscription.plan))
-        .where(Subscription.tenant_id == _tenant_id(user))
+        .where(Subscription.tenant_id == _tenant_id(user, db))
         .order_by(desc(Subscription.created_at))
     ).all()
     return [_serialize_subscription(subscription) for subscription in subscriptions]
@@ -190,7 +208,7 @@ def get_product_access(
     user: User = Depends(get_current_user),
 ):
     require_product_key(product_key)
-    tenant_id = _tenant_id(user)
+    tenant_id = _tenant_id(user, db)
     access = (
         require_tenant_product_access(
             db, tenant_id, product_key, is_admin=user.is_admin
@@ -289,11 +307,6 @@ def create_product_grant(
             status_code=status.HTTP_409_CONFLICT,
             detail="This product is not published for access grants.",
         )
-    if payload.product_key == "trademark":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Trademark Conflict access requires a verified subscription payment.",
-        )
     if db.get(Tenant, payload.tenant_id) is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     grant = ProductAccessGrant(
@@ -365,7 +378,7 @@ def create_product_launch_code(
     user: User = Depends(get_current_user),
 ):
     require_product_key(product_key)
-    tenant_id = _tenant_id(user)
+    tenant_id = _tenant_id(user, db)
     access = (
         require_tenant_product_access(
             db, tenant_id, product_key, is_admin=user.is_admin

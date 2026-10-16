@@ -19,7 +19,7 @@ PRODUCTS = {
         "name": "Trademark Conflict",
         "entitlement_code": "TRADEMARK_CONFLICT",
         "minimum_contract_months": 8,
-        "url": "https://trademark.apexiveai.com",
+        "url": "https://apexiveai-detector-v1-1.vercel.app",
     },
 
     "workforce": {
@@ -39,9 +39,15 @@ PRODUCTS = {
         "entitlement_code": "MNA_AIRLINES",
         "url": "https://mna.apexiveai.com",
     },
+
+    "rpa": {
+        "name": "Apexive MPT RPA",
+        "entitlement_code": "APEXIVE_MPT_RPA",
+        "url": "https://apexiveai-rpa-gules.vercel.app",
+    },
 }
 
-PUBLISHED_PRODUCT_KEYS = frozenset({"trademark", "workforce"})
+PUBLISHED_PRODUCT_KEYS = frozenset({"trademark", "workforce", "rpa"})
 
 ACTIVE_STATUS = "ACTIVE"
 
@@ -266,7 +272,7 @@ def tenant_product_access(
             )
         )
     )
-    grant = None if product_key == "trademark" else db.scalar(
+    grant = db.scalar(
         select(ProductAccessGrant)
         .where(
             ProductAccessGrant.tenant_id == tenant_id,

@@ -1,5 +1,7 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+import Link from "next/link";
 import {
   ArrowRight,
   FileSearch,
@@ -11,6 +13,22 @@ import {
 import RequireSubscription from "@/components/RequireSubscription";
 import TrademarkProductLaunchButton from "@/components/TrademarkProductLaunchButton";
 import TrademarkWorkspace from "@/components/TrademarkWorkspace";
+
+function subscribeToAdminRole(listener: () => void) {
+  window.addEventListener("storage", listener);
+  return () => window.removeEventListener("storage", listener);
+}
+
+function getAdminRoleSnapshot() {
+  try {
+    const storedUser = localStorage.getItem("apexive_user");
+    return storedUser
+      ? Boolean((JSON.parse(storedUser) as { is_admin?: boolean }).is_admin)
+      : false;
+  } catch {
+    return false;
+  }
+}
 
 const features = [
   {
@@ -47,6 +65,31 @@ const workflow = [
 ];
 
 export default function TrademarkConflictPage() {
+  const isAdmin = useSyncExternalStore(
+    subscribeToAdminRole,
+    getAdminRoleSnapshot,
+    () => false,
+  );
+
+  if (isAdmin) {
+    return (
+      <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold">Trademark Conflict</h1>
+            <Link
+              href="/admin"
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-white"
+            >
+              Admin dashboard
+            </Link>
+          </div>
+          <TrademarkWorkspace />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <RequireSubscription productKey="trademark">
       <main className="min-h-screen bg-slate-50 text-slate-950">

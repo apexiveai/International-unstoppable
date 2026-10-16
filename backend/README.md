@@ -87,6 +87,24 @@ Trademark Conflict access can use `POST /api/clone-detector/domains/availability
 This lookup reports availability only; it does not register or purchase domains
 and is not a trademark clearance or legal determination.
 
+## RPA licenses
+
+RPA license plans, one-time license key issuance, customer assignment,
+extensions, suspension/revocation, activation history, renewal alerts and
+issued-value reports are managed at `/admin/licenses`. The API stores only a
+SHA-256 hash of the cryptographically random key. The customer/tenant,
+validity dates, status, plan limits and active robot devices are checked by
+`POST /api/licenses/validate`; this endpoint requires the private
+`RPA_LICENSE_SERVICE_TOKEN` header and is intended only for the RPA
+orchestrator. Configure the same high-entropy token on the RPA backend as
+`LICENSE_SERVICE_TOKEN`, alongside its server-side `LICENSE_API_URL` and
+`LICENSE_KEY`. Never expose these values in frontend environment variables.
+License verification fails closed if the central service is unavailable.
+Apply the Alembic migration before using license management. Renewal reminders
+create deduplicated in-app notifications for active customer accounts and send
+email when `EMAIL_ENABLED` and SMTP are configured; the Admin dashboard lets
+authorized administrators trigger due reminders.
+
 Run the Alembic migration before deploying the API:
 
 ```powershell
