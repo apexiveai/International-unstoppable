@@ -490,6 +490,7 @@ function AdminDashboard() {
           </Link>
           <nav aria-label="Admin navigation" className="mt-8 grid gap-1 text-sm">
             <a href="#dashboard" className="rounded-lg px-3 py-2.5 font-semibold text-slate-200 hover:bg-slate-800/70">Dashboard</a>
+            <Link href="/admin/trademark-conflicts" className="rounded-lg px-3 py-2.5 text-cyan-300 hover:bg-slate-800/70">Trademark Conflict</Link>
             <div className="pt-3">
               <a href="#clients" className="px-3 text-xs font-bold uppercase tracking-widest text-slate-500">Clients</a>
               <div className="mt-1 grid gap-1">
@@ -557,6 +558,7 @@ function AdminDashboard() {
               </div>
               <button onClick={() => void load()} disabled={busy || loading} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50">Refresh data</button>
               <Link href="/admin/licenses" className="rounded-lg border border-cyan-400/30 px-4 py-2 text-sm font-semibold text-cyan-200 hover:bg-cyan-400/10">License Management</Link>
+              <Link href="/admin/trademark-conflicts" className="rounded-lg border border-fuchsia-400/30 px-4 py-2 text-sm font-semibold text-fuchsia-200 hover:bg-fuchsia-400/10">Trademark operations</Link>
             </div>
           </header>
 

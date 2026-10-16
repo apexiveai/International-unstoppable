@@ -191,6 +191,31 @@ export type AdminLicense = {
   }>;
 };
 
+export type AdminTrademarkConflict = {
+  id: number;
+  tenant_id: number;
+  tenant_name: string;
+  user_name: string;
+  user_email: string;
+  original_filename: string;
+  comparison_filename: string;
+  similarity_percent: number | null;
+  created_at: string;
+};
+
+export type AdminTrademarkConflictResponse = {
+  items: AdminTrademarkConflict[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  summary: {
+    total_checks: number;
+    checks_last_24h: number;
+    workspaces_with_checks: number;
+  };
+};
+
 async function adminRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -233,6 +258,14 @@ async function adminRequest<T>(
     throw new Error(message);
   }
   return response.json() as Promise<T>;
+}
+
+export function getAdminTrademarkConflicts(page: number, search = "") {
+  const params = new URLSearchParams({ page: String(page), page_size: "20" });
+  if (search.trim()) params.set("q", search.trim());
+  return adminRequest<AdminTrademarkConflictResponse>(
+    `/api/admin/trademark-conflicts?${params.toString()}`,
+  );
 }
 
 export async function getAdminDashboard(includeAuditLogs = true) {

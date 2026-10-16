@@ -93,7 +93,8 @@ export async function createProductLaunch(productKey: string) {
   );
   const configuredDetectorUrl =
     productKey === "trademark"
-      ? process.env.NEXT_PUBLIC_TRADEMARK_DETECTOR_URL?.trim()
+      ? process.env.NEXT_PUBLIC_TRADEMARK_DETECTOR_URL?.trim() ||
+        "https://apexiveai-detector-v1-1.vercel.app"
       : undefined;
   if (!configuredDetectorUrl) return launch;
 

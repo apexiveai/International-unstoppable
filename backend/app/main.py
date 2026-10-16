@@ -12,6 +12,7 @@ from app.api.article import router as article_router
 from app.api.projects import router as projects_router
 from app.api.resources import router as resources_router
 from app.api.clone_detector import router as clone_detector_router
+from app.api.admin_trademark_conflicts import router as admin_trademark_conflicts_router
 from app.api import chatbot
 from app.api.tenant import router as tenant_router
 from app.api.project_engagement import router as project_engagement_router
@@ -51,6 +52,7 @@ api.include_router(
 )
 
 api.include_router(admin_router)
+api.include_router(admin_trademark_conflicts_router)
 api.include_router(client_management_router)
 api.include_router(tenant_router)
 api.include_router(project_engagement_router)
